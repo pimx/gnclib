@@ -6,7 +6,10 @@ OBJ = $(SRC:src/%.cpp=build/%.o)
 
 all: build/libgnc.a
 
-build/%.o: src/%.cpp
+build:
+	mkdir -p build
+
+build/%.o: src/%.cpp | build
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 build/libgnc.a: $(OBJ)
