@@ -1,2 +1,13 @@
 # gnclib
-Guidance Navigation and Control library. Coordinate frames, quaternions, gravity, atmosphere, aeroforces
+
+Статическая библиотека GNC: атмосфера, аэродинамика (полосовая модель,
+Cx(M), экранирование ретро-струёй, экранный эффект), геодезия WGS-84
+(ECEF/ENU, строгая сила тяжести J2 + центробежная), фреймы и
+кватернионы, ветер, CLI, утилиты. C++17, без STL/исключений/RTTI/куч.
+
+Сборка: `make` (g++, build/libgnc.a) или `build.bat` (VS2026,
+build\gnc.lib). Заголовки -- include/, версия -- include/gnclib_version.h;
+тег репозитория обязан совпадать с GNCLIB_VERSION.
+
+Потребители подключают: -I<gnclib>/include и линкуют build/libgnc.a
+(gnc.lib). Сборка потребителей против main запрещена -- только тег.
