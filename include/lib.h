@@ -34,6 +34,5 @@
 
 #include "lib_func.h"
 #include "lib_task.h"
-#include "lib_telemetry.h"
 
 #endif /* LIB_H */
