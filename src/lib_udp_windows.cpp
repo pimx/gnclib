@@ -1,8 +1,8 @@
-#define _CRT_SECURE_NO_WARNINGS
-#define _USE_MATH_DEFINES
+//======================================================================
+//  lib_udp_windows.cpp - UdpReader / UdpSender for Windows (WinSock2;
+//  WSAStartup/WSACleanup per object - Windows keeps a reference count).
+//======================================================================
 
-// lib_udp_windows.cpp -- реализация UdpReader / UdpSender для Windows
-// (WinSock2; WSAStartup/WSACleanup на объект -- Windows ведёт счётчик).
 #ifdef _WIN32
 
 #include "lib_udp.h"
@@ -15,16 +15,21 @@
 #include <string.h>
 #pragma comment(lib, "ws2_32.lib")
 
-UdpReader::UdpReader() : m_sock(-1), m_open(false)
+namespace gnc
+{
+
+UdpReader::UdpReader()
+    : m_sock(-1)
+    , m_open(false)
 {
 }
 
 UdpReader::~UdpReader()
 {
-    close();
+    Close();
 }
 
-bool UdpReader::open(int port, bool loopbackOnly, int timeoutMs)
+bool UdpReader::Open(int port, bool loopbackOnly, int timeoutMs)
 {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -41,7 +46,12 @@ bool UdpReader::open(int port, bool loopbackOnly, int timeoutMs)
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = htons((unsigned short)port);
-    sa.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
+    unsigned long addr = INADDR_ANY;
+    if (loopbackOnly)
+    {
+        addr = INADDR_LOOPBACK;
+    }
+    sa.sin_addr.s_addr = htonl(addr);
     if (bind(s, (struct sockaddr*)&sa, sizeof(sa)) != 0)
     {
         closesocket(s);
@@ -58,7 +68,7 @@ bool UdpReader::open(int port, bool loopbackOnly, int timeoutMs)
     return true;
 }
 
-void UdpReader::close()
+void UdpReader::Close()
 {
     if (m_open)
     {
@@ -68,7 +78,7 @@ void UdpReader::close()
     }
 }
 
-int UdpReader::read(void* buf, int maxLen)
+int UdpReader::Read(void* buf, int maxLen)
 {
     if (!m_open)
     {
@@ -77,16 +87,18 @@ int UdpReader::read(void* buf, int maxLen)
     return recv((SOCKET)m_sock, (char*)buf, maxLen, 0);
 }
 
-UdpSender::UdpSender() : m_sock(-1), m_open(false)
+UdpSender::UdpSender()
+    : m_sock(-1)
+    , m_open(false)
 {
 }
 
 UdpSender::~UdpSender()
 {
-    close();
+    Close();
 }
 
-bool UdpSender::open()
+bool UdpSender::Open()
 {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -104,7 +116,7 @@ bool UdpSender::open()
     return true;
 }
 
-void UdpSender::close()
+void UdpSender::Close()
 {
     if (m_open)
     {
@@ -114,7 +126,7 @@ void UdpSender::close()
     }
 }
 
-bool UdpSender::send(const char* host, int port, const void* buf, int len)
+bool UdpSender::Send(const char* host, int port, const void* buf, int len)
 {
     if (!m_open)
     {
@@ -132,8 +144,11 @@ bool UdpSender::send(const char* host, int port, const void* buf, int len)
     {
         return false;
     }
-    return sendto((SOCKET)m_sock, (const char*)buf, len, 0,
-                  (struct sockaddr*)&sa, sizeof(sa)) == len;
+    int n = sendto((SOCKET)m_sock, (const char*)buf, len, 0,
+                   (struct sockaddr*)&sa, sizeof(sa));
+    return n == len;
 }
 
-#endif // _WIN32
+}   // namespace gnc
+
+#endif  // _WIN32

@@ -8,12 +8,9 @@
 #ifndef LIB_LINALG_H
 #define LIB_LINALG_H
 
-#define _USE_MATH_DEFINES
 #include <math.h>
 
 struct Quat; /* опережающее объявление: используется в Mat3::toQuat */
-struct VecEnu;  /* фреймы -- в lib_frames.h; здесь только объявления */
-struct VecXBody; /* для деклараций методов сопряжения Mat3/Quat */
 
 /* ----------------------------- Vec3 ----------------------------- */
 struct Vec3
@@ -51,14 +48,6 @@ struct Vec3
     {
         return sqrt(dot(*this));
     }
-    double norm2() const
-    {
-        return dot(*this);
-    }
-    Vec3 neg() const
-    {
-        return Vec3(-x, -y, -z);
-    }
 
     /* Единичный вектор; нулевой вектор возвращается нулём. */
     Vec3 unit() const
@@ -81,46 +70,20 @@ struct Vec3
         }
         return scale(maxNorm / n);
     }
-
-    /* Линейная интерполяция this -> b, t в [0,1] (не клампится). */
-    Vec3 lerp(Vec3 b, double t) const
-    {
-        return add(b.sub(*this).scale(t));
-    }
-
-    static Vec3 zero()
-    {
-        return Vec3(0, 0, 0);
-    }
 };
 
 /* ----------------------------- Mat3 ----------------------------- */
-/* Построчное хранение 3x3: m[строка][столбец]. */
-/*============================================================================
- * ТИПИЗИРОВАННЫЕ ВЕКТОРЫ СИСТЕМ КООРДИНАТ.
- *
- * VecEnu -- вектор в системе площадки ENU: поля e (восток), n (север),
- * u (верх). VecXBody -- вектор в связанной системе: поля x, y, z.
- * Типы РАЗНЫЕ: смешать ENU и BODY в одном выражении компилятор не даст;
- * переход между системами -- только через матрицу ориентации
- * (Reb.mulv(VecXBody) -> VecEnu, Reb.mulTv(VecEnu) -> VecXBody).
- *
- * Порядок полей = порядок в памяти = E, N, U (и X, Y, Z) -- совпадает с
- * прежним Vec3, поэтому двоичные форматы сообщений и телеметрии не
- * меняются. Мосты vec()/of() -- для покомпонентной математики общего
- * назначения (фильтры, интеграторы), где система координат уже учтена.
- * ЭТАП 297: системы координат перенесены в lib_frames.h/.cpp.
- *============================================================================*/
+/* Построчное хранение 3x3: m[строка][столбец].
+ * ТИПИЗАЦИЯ СИСТЕМ КООРДИНАТ -- семейства gnc (lib_frames.h,
+ * lib_rotation.h); с этапа V61 прежние VecEnu/VecXBody удалены,
+ * сопряжение типизированных величин -- gnc::CfRotation (B2L/L2B).
+ * Vec3/Mat3/Quat -- безымянная линейная алгебра для внутренней
+ * математики (фильтры, ковариации, интеграторы). */
 struct Mat3
 {
     double m[3][3];
 
     /* Умножение на вектор: r = M * v. */
-    /* Reb: BODY -> ENU (типизированный переход между системами). */
-    VecEnu mulv(VecXBody v) const;   /* тело -- в lib_frames.h */
-    /* Reb^T: ENU -> BODY. */
-    VecXBody mulTv(VecEnu v) const;  /* тело -- в lib_frames.h */
-
     Vec3 mulv(Vec3 v) const
     {
         return Vec3(m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
@@ -142,19 +105,6 @@ struct Mat3
                     s += m[i][k] * B.m[k][j];
                 }
                 R.m[i][j] = s;
-            }
-        }
-        return R;
-    }
-
-    Mat3 transpose() const
-    {
-        Mat3 R;
-        for (int i = 0; i < 3; i++)
-        {
-            for (int j = 0; j < 3; j++)
-            {
-                R.m[i][j] = m[j][i];
             }
         }
         return R;
@@ -204,17 +154,6 @@ struct Mat3
     Vec3 row(int i) const
     {
         return Vec3(m[i][0], m[i][1], m[i][2]);
-    }
-    Vec3 col(int j) const
-    {
-        return Vec3(m[0][j], m[1][j], m[2][j]);
-    }
-
-    /* Оператор vee: обратный к skew для кососимметричной матрицы. */
-    Vec3 vee() const
-    {
-        return Vec3(0.5 * (m[2][1] - m[1][2]), 0.5 * (m[0][2] - m[2][0]),
-                    0.5 * (m[1][0] - m[0][1]));
     }
 
     /* Переортонормирование DCM методом Грама-Шмидта (по строкам);
@@ -324,42 +263,13 @@ struct Quat
                     w * b.z + x * b.y - y * b.x + z * b.w);
     }
 
-    Quat conj() const
-    {
-        return Quat(w, -x, -y, -z);
-    }
-
     /* Поворот вектора кватернионом (без построения DCM):
      * v' = v + 2 qv x (qv x v + w v). */
-    /* Ориентация BODY -> ENU: типизированные операции. */
-    VecEnu rotate(VecXBody v) const;  /* тело -- в lib_frames.h */
-    Quat deriv(VecXBody wBody) const; /* тело -- в lib_frames.h */
-
     Vec3 rotate(Vec3 v) const
     {
         Vec3 qv(x, y, z);
         Vec3 t = qv.cross(v).scale(2.0);
         return v.add(t.scale(w)).add(qv.cross(t));
-    }
-
-    /* Кинематика кватерниона: qdot = 0.5 * q * (0, w_body). */
-    Quat deriv(Vec3 wBody) const
-    {
-        Quat omega = Quat(0.0, wBody.x, wBody.y, wBody.z);
-        Quat d = mul(omega);
-        return Quat(0.5 * d.w, 0.5 * d.x, 0.5 * d.y, 0.5 * d.z);
-    }
-
-    /* Угол поворота, представляемый кватернионом, [0..pi]. */
-    double angle() const
-    {
-        Quat q = normalize();
-        double c = fabs(q.w);
-        if (c > 1.0)
-        {
-            c = 1.0;
-        }
-        return 2.0 * acos(c);
     }
 
     /* Кватернион по оси (единичной) и углу. */

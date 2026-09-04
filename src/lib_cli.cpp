@@ -1,6 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-#define _USE_MATH_DEFINES
-
 // lib_cli.cpp -- реализация разбора командной строки (см. lib_cli.h).
 #include "lib_cli.h"
 
@@ -113,6 +110,15 @@ bool Cli::nameMatches(const char* name, int len, const char* key)
     {
         return false;
     }
+    // Ключ, объявленный с ведущим '=' -- ТОЧНОЕ совпадение (V70):
+    // не участвует в префиксных сокращениях и не создаёт
+    // неоднозначности прежним однобуквенным флагам.
+    bool exactOnly = false;
+    if (key[0] == '=')
+    {
+        exactOnly = true;
+        key = key + 1;
+    }
     for (int i = 0; i < len; ++i)
     {
         char a = name[i];
@@ -134,6 +140,10 @@ bool Cli::nameMatches(const char* name, int len, const char* key)
             return false;
         }
     }
+    if (exactOnly && key[len] != 0)
+    {
+        return false; // сокращение точного ключа запрещено
+    }
     return true;
 }
 
@@ -153,8 +163,30 @@ void Cli::copyValue(char dst[], const char* src)
 
 const Cli::Key* Cli::findKey(const char* key) const
 {
+    // Точный ключ ("=key" в объявленном списке, V70): токен строки
+    // должен совпасть с именем ПОЛНОСТЬЮ -- сокращения не принимаются
+    // и не перехватывают чужие однобуквенные флаги.
+    bool exactOnly = false;
+    if (m_defs != 0)
+    {
+        int klen = (int)strlen(key);
+        for (int i = 0; i < m_nDefs; ++i)
+        {
+            const char* d = m_defs[i];
+            if (d != 0 && d[0] == '=' &&
+                nameMatches(key, klen, d))
+            {
+                exactOnly = true;
+                break;
+            }
+        }
+    }
     for (int i = 0; i < m_nKeys; ++i)
     {
+        if (exactOnly && m_keys[i].nameLen != (int)strlen(key))
+        {
+            continue;
+        }
         if (nameMatches(m_keys[i].name, m_keys[i].nameLen, key))
         {
             return &m_keys[i];

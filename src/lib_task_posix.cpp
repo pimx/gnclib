@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-#define _USE_MATH_DEFINES
 
 // lib_task_posix.cpp -- реализация TaskOs для POSIX (Linux):
 // pthread + nanosleep + __sync_synchronize.

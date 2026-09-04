@@ -1,64 +1,84 @@
-//============================================================================
-// lib_udp.h -- библиотечные классы обмена по UDP.
+//======================================================================
+//  lib_udp.h
+//  UDP exchange classes. The interface is OS-invariant and pulls no OS
+//  headers; the implementations live in udp_windows.cpp (WinSock2,
+//  WSAStartup per object - Windows reference-counts it) and
+//  udp_posix.cpp (BSD sockets). Both files are guarded by #ifdef and
+//  can be fed to the build system unconditionally.
 //
-// UdpReader -- приём датаграмм: сокет, привязанный к порту (опционально
-// только loopback), с настраиваемым таймаутом приёма (для циклов с
-// проверкой флага останова).
-// UdpSender -- отправка датаграмм на host:port (host 0 -> 127.0.0.1).
+//  UdpReader - datagram reception: a socket bound to a port
+//  (optionally loopback only) with a configurable receive timeout
+//  (for loops that poll a stop flag).
+//  UdpSender - datagram transmission to host:port (host 0 -> 127.0.0.1).
 //
-// Интерфейс инвариантен к операционной системе; реализации -- в файлах
-// с суффиксами ОС: lib_udp_windows.cpp (WinSock2, WSAStartup на объект),
-// lib_udp_posix.cpp (BSD-сокеты). Без STL, исключений и динамических
-// аллокаций.
-//============================================================================
+//  The classes own a socket, so they are non-copyable (a copy would
+//  double-close the descriptor). C++17, no STL, no heap, no exceptions.
+//======================================================================
+
 #ifndef LIB_UDP_H
 #define LIB_UDP_H
+
+namespace gnc
+{
 
 class UdpReader
 {
 public:
+
     UdpReader();
     ~UdpReader();
 
-    // Открыть приём на порту; loopbackOnly -- привязка к 127.0.0.1;
-    // timeoutMs -- таймаут приёма (0 -- блокирующий приём)
-    bool open(int port, bool loopbackOnly, int timeoutMs);
-    void close();
-    bool isOpen() const
+    //  Open reception on a port; loopbackOnly - bind to 127.0.0.1;
+    //  timeoutMs - receive timeout (0 - blocking reception).
+    bool Open(int port, bool loopbackOnly, int timeoutMs);
+
+    void Close();
+
+    bool IsOpen() const
     {
         return m_open;
     }
 
-    // Приём одной датаграммы; возврат длины, -1 -- таймаут или ошибка
-    int read(void* buf, int maxLen);
+    //  Receive one datagram; returns its length, -1 - timeout or error.
+    int Read(void* buf, int maxLen);
 
 private:
-    // --- состояние сокета ---
-    long long m_sock; // описатель сокета (ОС-зависимый)
-    bool m_open;      // сокет открыт
+
+    UdpReader(const UdpReader&) = delete;
+    UdpReader& operator=(const UdpReader&) = delete;
+
+    long long m_sock;   // socket descriptor (OS-dependent)
+    bool m_open;
 };
 
 class UdpSender
 {
 public:
+
     UdpSender();
     ~UdpSender();
 
-    // Открыть сокет отправки
-    bool open();
-    void close();
-    bool isOpen() const
+    bool Open();
+
+    void Close();
+
+    bool IsOpen() const
     {
         return m_open;
     }
 
-    // Отправить датаграмму на host:port (host 0 -> "127.0.0.1")
-    bool send(const char* host, int port, const void* buf, int len);
+    //  Send a datagram to host:port (host 0 -> "127.0.0.1").
+    bool Send(const char* host, int port, const void* buf, int len);
 
 private:
-    // --- состояние сокета ---
-    long long m_sock; // описатель сокета (ОС-зависимый)
-    bool m_open;      // сокет открыт
+
+    UdpSender(const UdpSender&) = delete;
+    UdpSender& operator=(const UdpSender&) = delete;
+
+    long long m_sock;   // socket descriptor (OS-dependent)
+    bool m_open;
 };
 
-#endif // LIB_UDP_H
+}   // namespace gnc
+
+#endif  // LIB_UDP_H
