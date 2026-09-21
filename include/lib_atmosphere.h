@@ -1,10 +1,21 @@
 //======================================================================
 //  lib_atmosphere.h
-//  EnvAtmosphere - layered US Standard Atmosphere 1976, valid to ~86 km, with a
+//  EnvAtmosphere - layered US Standard Atmosphere 1976, valid to 86 km, with a
 //  temperature offset from ISA (hot/cold day: temperature shifted,
 //  layered pressure kept, density recomputed from the state equation).
-//  Height is treated as geometric (error < 0.5% below 50 km); exact
-//  geometric <-> geopotential conversions are provided.
+//
+//  HEIGHT. Every function takes the GEOMETRIC height, m -- the height above
+//  the WGS84 ellipsoid that navigation gives. The US-76 layers are defined in
+//  GEOPOTENTIAL height, and the two primitives that read them (Pressure and
+//  TemperatureIsa) convert inside:  H = R0 h / (R0 + h),  R0 = R_GEOPOT =
+//  6 356 766 m, as US-76 prescribes. The upper end, 86 km, is geometric
+//  (84.852 km geopotential). The conversions are public as well.
+//
+//  Up to version 1.0.2 the geometric height was put into the geopotential
+//  layers without conversion. That shifted the profile upward: pressure and
+//  density came out low by 0.36 % at 12 km, 0.77 % at 17.6 km, about 4 % at
+//  43 km and 5 % at 51.6 km (temperature and speed of sound much less); the
+//  old header estimated it as below 0.5 %, which holds only for temperature.
 //
 //  The class is constexpr-constructible: a standard-day instance can be
 //  a constant-initialized static (ATM_STD below). C++17, no STL, no heap.
@@ -93,6 +104,7 @@ public:
     //  power law with lapse, exponent in isothermal layers; 0 above
     //  86 km. Does NOT depend on dTemp (non-standard-day convention:
     //  pressure profile kept, temperature shifted).
+    //    h -- geometric height, m; converted to geopotential inside
     double Pressure(double h) const
     {
         if (h <= 0.0)
@@ -103,6 +115,7 @@ public:
         {
             return 0.0;
         }
+        h = GeomToGeopot(h);
         int i = LayerIndex(h);
         double hb = m_lay[i].hb;
         double tb = m_lay[i].tb;
@@ -246,6 +259,7 @@ private:
     }
 
     //  ISA temperature without the offset (internal, for the pressure).
+    //    h -- geometric height, m; converted to geopotential inside
     double TemperatureIsa(double h) const
     {
         if (h <= 0.0)
@@ -256,6 +270,7 @@ private:
         {
             return 186.0;
         }
+        h = GeomToGeopot(h);
         int i = LayerIndex(h);
         double t = m_lay[i].tb + m_lay[i].lb * (h - m_lay[i].hb);
         if (t < 1.0e-3)
