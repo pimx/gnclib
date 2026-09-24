@@ -17,26 +17,22 @@
 #ifndef LIB_H
 #define LIB_H
 
-#include "gnclib_version.h"
-
-#include "lib_cli.h"			// разбор командной строки
-
-#include "lib_aerodynamics.h"
-#include "lib_atmosphere.h"
-#include "lib_chain.h"
-#include "lib_dynamics.h"
-#include "lib_frame_ops.h"		// операции над векторами площадки/BODY (V80)
 #include "lib_frames.h"
-#include "lib_func.h"
+#include "lib_rotation.h"
+#include "lib_frame_ops.h" // операции над векторами площадки/BODY (V80)
 #include "lib_geodesy.h"
 #include "lib_gravity.h"
-#include "lib_random.h"
-#include "lib_rotation.h"
-#include "lib_state.h"
-#include "lib_task.h"
-#include "lib_udp.h"
+#include "lib_atmosphere.h"
+#include "lib_aerodynamics.h"
 #include "lib_wind.h"
+#include "lib_random.h"
+#include "lib_state.h"
+#include "lib_dynamics.h"
+#include "lib_chain.h"
+#include "lib_udp.h"
+#include "lib_cli.h"
 
-// #include "lib_linalg.h"
+#include "lib_func.h"
+#include "lib_task.h"
 
 #endif /* LIB_H */
