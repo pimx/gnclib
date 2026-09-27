@@ -17,3 +17,9 @@ build/libgnc.a: $(OBJ)
 
 clean:
 	rm -f build/*.o build/libgnc.a
+
+# gnclib 1.1.0: unit tests of the integration and the rotating Earth
+test: build
+	$(CXX) $(CXXFLAGS) tests/test_integrate.cpp -o build/test_integrate
+	./build/test_integrate
+
