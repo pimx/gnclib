@@ -15,8 +15,13 @@ namespace gnc
 Eskf::Eskf()
     : m_frame(0), m_g(gnc::G0_STD), m_qScale(1.0), m_gnssAge(0.0),
       m_time(0.0), m_wLast { }, m_lever { }, m_imuLever { }, m_wPrevLever { },
-      m_leverInit(false), m_v { }, m_p { }, m_ba { }, m_bg { }, m_rejectRun(0), m_wDotF { }, m_wDotVar(0.0), m_wDotV { }
+      m_leverInit(false), m_v { }, m_p { }, m_ba { }, m_bg { }, m_wDotF { }, m_wDotVar(0.0), m_wDotV { }
 {
+    int ir = 0;
+    for (ir = 0; ir < N; ++ir)
+    {
+        m_rejectRun[ir] = 0;
+    }
     int i = 0;
     int j = 0;
     for (i = 0; i < N; ++i)

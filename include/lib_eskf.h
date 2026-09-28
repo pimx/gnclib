@@ -179,7 +179,7 @@ private:
     gnc::CfBodyVector m_ba;         // смещение акселерометров (связанная)
     gnc::CfBodyVector m_bg;         // смещение гироскопов (связанная)
     double m_P[N][N];               // ковариация ошибок
-    int m_rejectRun;                // V90.35: подряд отброшенных стробом измерений
+    int m_rejectRun[N];             // подряд отброшенных стробом измерений -- по компоненте (1.1.1)
     gnc::CfBodyVector m_wDotF;      // V90.35: сглаженное угловое ускорение (рычаг ИНС)
     double m_wDotVar;
     gnc::CfBodyVector m_wDotV;      // 20 ms smoothed derivative for the lever noise variance               // V90.36: дисперсия неучтённого углового ускорения, (рад/с^2)^2

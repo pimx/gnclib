@@ -67,15 +67,15 @@ void Eskf::scalarUpdate(int idx, double c, double innov, double R)
         // разошёлся (P мала относительно фактической ошибки): дисперсия
         // измеряемой компоненты поднимается до квадрата невязки, и
         // измерение принимается -- иначе расхождение необратимо
-        m_rejectRun++;
-        if (m_rejectRun < 60)
+        m_rejectRun[idx]++;
+        if (m_rejectRun[idx] < 60)
         {
             return;
         }
         m_P[idx][idx] += innov * innov / (c * c + 1e-12);
         S = c * c * m_P[idx][idx] + R;
     }
-    m_rejectRun = 0;
+    m_rejectRun[idx] = 0;
     double K[N];
     int i = 0;
     int j = 0;
