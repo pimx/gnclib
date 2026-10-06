@@ -22,4 +22,6 @@ clean:
 test: build
 	$(CXX) $(CXXFLAGS) tests/test_integrate.cpp -o build/test_integrate
 	./build/test_integrate
+	$(CXX) $(CXXFLAGS) tests/test_ini.cpp build/libgnc.a -o build/test_ini
+	./build/test_ini
 

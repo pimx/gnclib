@@ -463,3 +463,439 @@ void Cli::init(int argc, char** argv, const char* const* keys, int nkeys,
         requireUnambiguous(nm, "command line");
     }
 }
+
+//============================================================================
+// Значения ключей (1.2.0): адрес, списки, пары.
+//============================================================================
+
+// Адрес IPv4 a.b.c.d (каждая часть 0..255), n символов s; 1 -- верно.
+static int cliIpv4(const char* s, int n)
+{
+    int parts = 0;
+    int val = -1;
+    int i = 0;
+    for (i = 0; i <= n; i++)
+    {
+        char c = (i < n) ? s[i] : 0;
+        if (c >= '0' && c <= '9')
+        {
+            val = (val < 0) ? (c - '0') : val * 10 + (c - '0');
+            if (val > 255)
+            {
+                return 0;
+            }
+        }
+        else if (c == '.' || c == 0)
+        {
+            if (val < 0)
+            {
+                return 0;
+            }
+            parts++;
+            val = -1;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+    return (parts == 4) ? 1 : 0;
+}
+
+// Сетевой адрес из значения ключа (см. lib_cli.h; перенесено из
+// tlm90Endpoint проектов без изменения логики).
+bool Cli::parseEndpoint(const char* s, char addr[], int addrSize, int* port,
+                        const char* defAddr, int defPort)
+{
+    int a = 0;
+    int la = 0;
+    int p = 0;
+    int lp = 0;
+    int n = 0;
+    int colon = -1;
+    int dot = 0;
+    int i = 0;
+    if (s != 0)
+    {
+        while (s[n] != 0)
+        {
+            if (s[n] == ':' && colon < 0)
+            {
+                colon = n;
+            }
+            if (s[n] == '.')
+            {
+                dot = 1;
+            }
+            n++;
+        }
+    }
+    if (colon >= 0)
+    {
+        la = colon;
+        p = colon + 1;
+        lp = n - p;
+    }
+    else if (dot != 0)
+    {
+        la = n;
+    }
+    else
+    {
+        p = 0;
+        lp = n;
+    }
+    *port = defPort;
+    if (lp > 0)
+    {
+        long v = 0;
+        for (i = 0; i < lp; i++)
+        {
+            char c = s[p + i];
+            if (c < '0' || c > '9' || v > 65535)
+            {
+                return false;
+            }
+            v = v * 10 + (c - '0');
+        }
+        if (v < 1 || v > 65535)
+        {
+            return false;
+        }
+        *port = (int)v;
+    }
+    if (la > 0)
+    {
+        if (cliIpv4(s + a, la) == 0 || la >= addrSize)
+        {
+            return false;
+        }
+        for (i = 0; i < la; i++)
+        {
+            addr[i] = s[a + i];
+        }
+        addr[la] = 0;
+    }
+    else
+    {
+        for (i = 0; defAddr[i] != 0 && i < addrSize - 1; i++)
+        {
+            addr[i] = defAddr[i];
+        }
+        addr[i] = 0;
+    }
+    return true;
+}
+
+// Элемент index списка через запятую (без пробелов по краям не
+// обрезается -- как прежние разборщики FLY90).
+bool Cli::listItem(const char* s, int index, char item[])
+{
+    item[0] = 0;
+    if (s == 0 || s[0] == 0 || index < 0)
+    {
+        return false;
+    }
+    int k = 0;
+    const char* p = s;
+    while (k < index)
+    {
+        const char* q = strchr(p, ',');
+        if (q == 0)
+        {
+            return false;
+        }
+        p = q + 1;
+        k++;
+    }
+    if (*p == 0)
+    {
+        return false;
+    }
+    const char* e = strchr(p, ',');
+    int len = (e != 0) ? (int)(e - p) : (int)strlen(p);
+    len = (len < CLI_VALUE_MAX - 1) ? len : CLI_VALUE_MAX - 1;
+    memcpy(item, p, (size_t)len);
+    item[len] = 0;
+    return true;
+}
+
+// Пара "имя=значение": разделение по первому '='; false -- '=' нет.
+bool Cli::splitPair(const char* s, char name[], char value[])
+{
+    name[0] = 0;
+    value[0] = 0;
+    const char* eq = (s != 0) ? strchr(s, '=') : 0;
+    if (eq == 0)
+    {
+        return false;
+    }
+    int len = (int)(eq - s);
+    len = (len < CLI_VALUE_MAX - 1) ? len : CLI_VALUE_MAX - 1;
+    memcpy(name, s, (size_t)len);
+    name[len] = 0;
+    strncpy(value, eq + 1, CLI_VALUE_MAX);
+    value[CLI_VALUE_MAX - 1] = 0;
+    return true;
+}
+
+//============================================================================
+// Ini (1.2.0) -- разбор файла параметров (см. lib_cli.h).
+//============================================================================
+
+// Конструктор: пусто.
+Ini::Ini() : m_used(0), m_n(0), m_overflow(0)
+{
+    m_buf[0] = 0;
+}
+
+// Отбрасывание пробелов и табуляций (и \r, \n) по краям; возврат -- начало.
+static char* iniTrim(char* s)
+{
+    while (*s == ' ' || *s == '\t')
+    {
+        s++;
+    }
+    int n = (int)strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' || s[n - 1] == '\r' || s[n - 1] == '\n'))
+    {
+        s[--n] = 0;
+    }
+    return s;
+}
+
+// Копия len символов s в буфер с нулём; смещение или -1 при переполнении.
+int Ini::store(const char* s, int len)
+{
+    if (m_used + len + 1 > INI_BUF)
+    {
+        m_overflow = 1;
+        return -1;
+    }
+    int at = m_used;
+    memcpy(m_buf + at, s, (size_t)len);
+    m_buf[at + len] = 0;
+    m_used += len + 1;
+    return at;
+}
+
+// Разбор одной строки (строка портится); sec -- смещение текущей секции.
+bool Ini::parseLine(char* s, int lineNo, int* sec)
+{
+    char* cm = strpbrk(s, ";#");
+    if (cm != 0)
+    {
+        *cm = 0;
+    }
+    char* t = iniTrim(s);
+    if (t[0] == '[')
+    {
+        char* e = strchr(t, ']');
+        int len = (e != 0) ? (int)(e - t - 1) : (int)strlen(t + 1);
+        char name[INI_LINE_MAX];
+        memcpy(name, t + 1, (size_t)len);
+        name[len] = 0;
+        char* nm = iniTrim(name);
+        int at = store(nm, (int)strlen(nm));
+        if (at < 0)
+        {
+            return false;
+        }
+        *sec = at;
+        return true;
+    }
+    char* eq = strchr(t, '=');
+    if (eq == 0)
+    {
+        return true;
+    }
+    *eq = 0;
+    char* key = iniTrim(t);
+    char* val = iniTrim(eq + 1);
+    if (key[0] == 0 || key[0] == '[')
+    {
+        return true;
+    }
+    if (m_n >= INI_MAX_ENTRIES)
+    {
+        m_overflow = 1;
+        return false;
+    }
+    int k = store(key, (int)strlen(key));
+    int v = store(val, (int)strlen(val));
+    if (k < 0 || v < 0)
+    {
+        return false;
+    }
+    m_e[m_n].sec = *sec;
+    m_e[m_n].key = k;
+    m_e[m_n].val = v;
+    m_e[m_n].line = lineNo;
+    m_n++;
+    return true;
+}
+
+// Разбор текста в памяти.
+bool Ini::loadText(const char* text)
+{
+    m_used = 0;
+    m_n = 0;
+    m_overflow = 0;
+    int sec = store("", 0);
+    int lineNo = 0;
+    const char* p = text;
+    while (p != 0 && *p != 0)
+    {
+        const char* e = strchr(p, '\n');
+        int len = (e != 0) ? (int)(e - p) : (int)strlen(p);
+        char line[INI_LINE_MAX];
+        int n = (len < INI_LINE_MAX - 1) ? len : INI_LINE_MAX - 1;
+        memcpy(line, p, (size_t)n);
+        line[n] = 0;
+        lineNo++;
+        if (parseLine(line, lineNo, &sec) == false)
+        {
+            fprintf(stderr, "INI: limits exceeded at line %d (%d keys, %d bytes)\n", lineNo,
+                    INI_MAX_ENTRIES, INI_BUF);
+            return false;
+        }
+        p = (e != 0) ? e + 1 : 0;
+    }
+    return true;
+}
+
+// Загрузка файла.
+bool Ini::load(const char* path)
+{
+    FILE* f = (path != 0) ? fopen(path, "rb") : 0;
+    if (f == 0)
+    {
+        m_n = 0;
+        return false;
+    }
+    m_used = 0;
+    m_n = 0;
+    m_overflow = 0;
+    int sec = store("", 0);
+    int lineNo = 0;
+    char line[INI_LINE_MAX];
+    bool ok = true;
+    while (ok && fgets(line, sizeof(line), f) != 0)
+    {
+        lineNo++;
+        ok = parseLine(line, lineNo, &sec);
+    }
+    fclose(f);
+    if (!ok)
+    {
+        fprintf(stderr, "INI: %s: limits exceeded at line %d (%d keys, %d bytes)\n", path, lineNo,
+                INI_MAX_ENTRIES, INI_BUF);
+    }
+    return ok;
+}
+
+// Ключ по индексу.
+const char* Ini::key(int i) const
+{
+    return (i >= 0 && i < m_n) ? m_buf + m_e[i].key : "";
+}
+
+// Значение по индексу.
+const char* Ini::value(int i) const
+{
+    return (i >= 0 && i < m_n) ? m_buf + m_e[i].val : "";
+}
+
+// Секция по индексу.
+const char* Ini::section(int i) const
+{
+    return (i >= 0 && i < m_n) ? m_buf + m_e[i].sec : "";
+}
+
+// Номер строки по индексу.
+int Ini::line(int i) const
+{
+    return (i >= 0 && i < m_n) ? m_e[i].line : 0;
+}
+
+// Значение числом (atof).
+double Ini::number(int i) const
+{
+    return atof(value(i));
+}
+
+// Значение целым (atoi).
+int Ini::integer(int i) const
+{
+    return atoi(value(i));
+}
+
+// Индекс последнего вхождения ключа или -1.
+int Ini::find(const char* k, const char* sec) const
+{
+    int i = 0;
+    for (i = m_n - 1; i >= 0; i--)
+    {
+        if (strcmp(m_buf + m_e[i].key, k) == 0
+            && (sec == 0 || strcmp(m_buf + m_e[i].sec, sec) == 0))
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Наличие ключа.
+bool Ini::hasKey(const char* k, const char* sec) const
+{
+    return find(k, sec) >= 0;
+}
+
+// Значение ключа строкой.
+bool Ini::getValue(const char* k, char out[], const char* def, const char* sec) const
+{
+    int i = find(k, sec);
+    const char* src = (i >= 0) ? value(i) : ((def != 0) ? def : "");
+    strncpy(out, src, CLI_VALUE_MAX);
+    out[CLI_VALUE_MAX - 1] = 0;
+    return i >= 0;
+}
+
+// Значение ключа числом.
+double Ini::getDouble(const char* k, double def, const char* sec) const
+{
+    int i = find(k, sec);
+    return (i >= 0) ? number(i) : def;
+}
+
+// Значение ключа целым.
+int Ini::getInt(const char* k, int def, const char* sec) const
+{
+    int i = find(k, sec);
+    return (i >= 0) ? integer(i) : def;
+}
+
+// Проверка ключей файла по объявленному списку.
+bool Ini::verifyKeys(const char* const* keys, int nkeys, bool verbose) const
+{
+    bool ok = true;
+    int i = 0;
+    for (i = 0; i < m_n; i++)
+    {
+        int found = 0;
+        int j = 0;
+        for (j = 0; j < nkeys && found == 0; j++)
+        {
+            found = (strcmp(keys[j], key(i)) == 0) ? 1 : 0;
+        }
+        if (found == 0)
+        {
+            ok = false;
+            if (verbose)
+            {
+                fprintf(stderr, "INI: unknown key '%s' (line %d)\n", key(i), line(i));
+            }
+        }
+    }
+    return ok;
+}

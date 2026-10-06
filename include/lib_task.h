@@ -198,9 +198,45 @@ struct MsgEnvelope
     uint16_t srcPort; // код автора (типа) сообщения = порт задачи
     uint16_t size; // размер полезной нагрузки, байт
     int32_t tick; // номер такта сообщения (-1 -- затравка)
-    double time;    // модельное время сообщения, с
+    int64_t time;   // V1.3.0: метка FILETIME (msgTimeToWire), 100 нс
     uint32_t magic; // MSG_MAGIC
+    uint32_t fill;  // V1.3.0: выравнивание размера до кратного 8 (24 байта)
 };
+
+//----------------------------------------------------------------------------
+// V1.3.0: время сообщений -- представление Windows FILETIME: int64,
+// интервалы 100 нс от 1601-01-01 UTC; метка = эпоха прогона + модельное
+// время. Эпоха по умолчанию -- 2026-01-01 00:00:00 UTC (детерминированная:
+// побайтные эталоны); задаётся msgSetEpoch до запуска задач.
+//----------------------------------------------------------------------------
+const int64_t MSG_EPOCH_DEFAULT = 134116992000000000LL;
+void msgSetEpoch(int64_t epoch);
+int64_t msgEpoch();
+int64_t msgTimeToWire(double t);
+double msgTimeFromWire(int64_t w);
+
+//----------------------------------------------------------------------------
+// V1.3.0: формат передачи сообщения задач. По умолчанию -- образ структуры
+// (memcpy); проект задаёт перегрузки MsgWireSize / MsgWirePack /
+// MsgWireUnpack для своих сообщений (поиск ADL при подстановке шаблона).
+//----------------------------------------------------------------------------
+template <class T>
+inline int MsgWireSize(const T*)
+{
+    return (int)sizeof(T);
+}
+
+template <class T>
+inline void MsgWirePack(const T& m, unsigned char* buf)
+{
+    memcpy(buf, &m, sizeof(T));
+}
+
+template <class T>
+inline void MsgWireUnpack(const unsigned char* buf, T* m)
+{
+    memcpy(m, buf, sizeof(T));
+}
 
 enum
 {
@@ -424,6 +460,14 @@ public:
         return m_out;
     }
 
+    // V1.3.0: выход -- в формате передачи (MsgWirePack) всем адресатам
+    void sendOut(int tk, double t)
+    {
+        unsigned char wire[MSG_MAX_PAYLOAD];
+        MsgWirePack(m_out, wire);
+        sendToAll(wire, MsgWireSize(&m_out), tk, t);
+    }
+
 protected:
     void cycle()
     {
@@ -444,10 +488,10 @@ protected:
                 need1 = m_tick + m_in1Off; // подстройка времени выполнена
             }
             if (env.srcPort == m_in1Port && env.tick == need1 &&
-                env.size == (int)sizeof(In1))
+                env.size == MsgWireSize(&m_in1))
             {
-                memcpy(&m_in1, buf, sizeof(In1));
-                tIn1 = env.time; // носитель времени -- вход 1
+                MsgWireUnpack(buf, &m_in1);
+                tIn1 = msgTimeFromWire(env.time); // носитель времени -- вход 1
                 got1 = true;
             }
         }
@@ -465,14 +509,14 @@ protected:
         m_lastTick = m_tick;
         m_lastTime = t;
         m_hasOut = true;
-        sendToAll(&m_out, (int)sizeof(OutMsg), m_tick, t);
+        sendOut(m_tick, t);
     }
 
     void resendLast()
     {
         if (m_hasOut)
         {
-            sendToAll(&m_out, (int)sizeof(OutMsg), m_lastTick, m_lastTime);
+            sendOut(m_lastTick, m_lastTime);
         }
     }
 
@@ -528,6 +572,14 @@ public:
         return m_out;
     }
 
+    // V1.3.0: выход -- в формате передачи (MsgWirePack) всем адресатам
+    void sendOut(int tk, double t)
+    {
+        unsigned char wire[MSG_MAX_PAYLOAD];
+        MsgWirePack(m_out, wire);
+        sendToAll(wire, MsgWireSize(&m_out), tk, t);
+    }
+
 protected:
     void cycle()
     {
@@ -554,16 +606,16 @@ protected:
                 got2 = false;
             }
             if (env.srcPort == m_in1Port && env.tick == need1 &&
-                env.size == (int)sizeof(In1))
+                env.size == MsgWireSize(&m_in1))
             {
-                memcpy(&m_in1, buf, sizeof(In1));
-                tIn1 = env.time; // носитель времени -- вход 1
+                MsgWireUnpack(buf, &m_in1);
+                tIn1 = msgTimeFromWire(env.time); // носитель времени -- вход 1
                 got1 = true;
             }
             else if (env.srcPort == m_in2Port && env.tick == need2 &&
-                     env.size == (int)sizeof(In2))
+                     env.size == MsgWireSize(&m_in2))
             {
-                memcpy(&m_in2, buf, sizeof(In2));
+                MsgWireUnpack(buf, &m_in2);
                 got2 = true;
             }
         }
@@ -577,14 +629,14 @@ protected:
         m_lastTick = m_tick;
         m_lastTime = t;
         m_hasOut = true;
-        sendToAll(&m_out, (int)sizeof(OutMsg), m_tick, t);
+        sendOut(m_tick, t);
     }
 
     void resendLast()
     {
         if (m_hasOut)
         {
-            sendToAll(&m_out, (int)sizeof(OutMsg), m_lastTick, m_lastTime);
+            sendOut(m_lastTick, m_lastTime);
         }
     }
 

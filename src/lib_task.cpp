@@ -184,7 +184,8 @@ void ModTaskBase::sendToAll(const void* payload, int size, int tk, double t)
     env.srcPort = (uint16_t)m_port;
     env.tick = (int32_t)tk;
     env.size = (uint16_t)size;
-    env.time = t;
+    env.time = msgTimeToWire(t);
+    env.fill = 0;
     memcpy(buf, &env, sizeof(env));
     memcpy(buf + sizeof(env), payload, size);
     for (int i = 0; i < m_nDest; ++i)
@@ -228,7 +229,8 @@ bool taskSendPrime(gnc::UdpSender& sender, int destPort, int srcPort,
     env.srcPort = (uint16_t)srcPort;
     env.tick = -1;
     env.size = (uint16_t)size;
-    env.time = t;
+    env.time = msgTimeToWire(t);
+    env.fill = 0;
     memcpy(buf, &env, sizeof(env));
     memcpy(buf + sizeof(env), payload, size);
     return sender.Send(0, destPort, buf, (int)sizeof(env) + size);
@@ -328,3 +330,35 @@ double RtPacer::lag(double t) const
     }
     return (TaskOs::wallNow() - m_t0) - t / m_speed;
 }
+
+//----------------------------------------------------------------------------
+// V1.3.0: время сообщений (FILETIME, 100 нс)
+//----------------------------------------------------------------------------
+static int64_t s_msgEpoch = MSG_EPOCH_DEFAULT;
+
+// Эпоха прогона (метка модельного времени 0).
+void msgSetEpoch(int64_t epoch)
+{
+    s_msgEpoch = epoch;
+}
+
+// Текущая эпоха.
+int64_t msgEpoch()
+{
+    return s_msgEpoch;
+}
+
+// Модельное время (с) -> метка FILETIME (округление к 100 нс).
+int64_t msgTimeToWire(double t)
+{
+    double q = t * 1.0e7;
+    int64_t k = (int64_t)((q >= 0.0) ? (q + 0.5) : (q - 0.5));
+    return s_msgEpoch + k;
+}
+
+// Метка FILETIME -> модельное время, с.
+double msgTimeFromWire(int64_t w)
+{
+    return (double)(w - s_msgEpoch) * 1.0e-7;
+}
+

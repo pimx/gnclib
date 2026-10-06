@@ -125,6 +125,21 @@ public:
     }
     bool getKeyName(int index, char name[]) const;
 
+    // --- разбор ЗНАЧЕНИЙ ключей (1.2.0; решение владельца: весь разбор --
+    // функциями lib_cli) ---
+    // Сетевой адрес "addr:port", "addr", "port", ":port", "addr:" или
+    // пусто; умолчания defAddr / defPort. Без ':' токен с '.' -- адрес,
+    // без '.' -- порт. addr -- IPv4 a.b.c.d, порт 1..65535. Возврат false --
+    // значение неверно (addr, port при этом не определены полностью)
+    static bool parseEndpoint(const char* s, char addr[], int addrSize, int* port,
+                              const char* defAddr = "127.0.0.1", int defPort = 9000);
+    // Элемент index (с 0) списка через запятую "a,b,c"; false -- нет
+    // такого элемента. Буфер >= CLI_VALUE_MAX
+    static bool listItem(const char* s, int index, char item[]);
+    // Пара "имя=значение" по первому '='; false -- '=' нет. Буферы >=
+    // CLI_VALUE_MAX
+    static bool splitPair(const char* s, char name[], char value[]);
+
 private:
     // --- объявленный список ключей приложения ---
     const char* const* m_defs; // таблица имён (не копируется) или 0
@@ -157,6 +172,87 @@ private:
     int m_nKeys;                    // число ключей
     const char* m_pos[CLI_MAX_POS]; // позиционные аргументы
     int m_nPos;                     // число позиционных
+};
+
+//============================================================================
+// Ini -- разбор файла параметров (1.2.0; решение владельца: разбор командной
+// строки, конфигурационных файлов и файлов инициализации -- только
+// функциями lib_cli). Синтаксис (как у прежних загрузчиков UFO90 / HOP90 /
+// BEE90, побайтно те же значения):
+//   ; или #   -- комментарий до конца строки (в любом месте строки);
+//   [имя]     -- секция (запоминается у последующих ключей);
+//   ключ = значение -- пробелы и табуляции по краям отбрасываются;
+//   строки без '=' и ключи, начинающиеся с '[', пропускаются.
+// Повтор ключа допустим, действует ПОСЛЕДНИЙ (как последовательное
+// присваивание прежних загрузчиков). Числа -- atof / atoi значения.
+// Без STL и динамических аллокаций: текст ключей и значений -- во
+// внутреннем буфере объекта (объявлять static: объект ~40 КБ).
+//============================================================================
+enum
+{
+    INI_MAX_ENTRIES = 512, // предел числа ключей файла
+    INI_BUF = 32768,       // буфер текста ключей, значений и секций
+    INI_LINE_MAX = 512     // предел длины строки файла
+};
+
+class Ini
+{
+public:
+    Ini();
+
+    // Загрузка файла; false -- файл не открыт либо переполнение пределов
+    // (диагностика в stderr, ASCII). Повторная загрузка заменяет прежнюю.
+    bool load(const char* path);
+
+    // Разбор текста в памяти (те же правила; для проверок и встроенных
+    // умолчаний). false -- переполнение пределов.
+    bool loadText(const char* text);
+
+    // Число ключей; ключ, значение, секция ("" -- до первой секции) и
+    // номер строки файла (с 1) по индексу в порядке файла
+    int count() const
+    {
+        return m_n;
+    }
+    const char* key(int i) const;
+    const char* value(int i) const;
+    const char* section(int i) const;
+    int line(int i) const;
+
+    // Значение по индексу числом (atof / atoi)
+    double number(int i) const;
+    int integer(int i) const;
+
+    // Поиск ключа (точное совпадение, регистр различается; section = 0 --
+    // в любой секции); действует последнее вхождение
+    bool hasKey(const char* key, const char* section = 0) const;
+    bool getValue(const char* key, char value[], const char* def = "",
+                  const char* section = 0) const; // буфер >= CLI_VALUE_MAX
+    double getDouble(const char* key, double def, const char* section = 0) const;
+    int getInt(const char* key, int def, const char* section = 0) const;
+
+    // Проверка по объявленному списку ключей: печатает (verbose) ключи
+    // файла, которых нет в списке; возврат true -- неизвестных нет
+    bool verifyKeys(const char* const* keys, int nkeys, bool verbose = true) const;
+
+private:
+    struct Entry
+    {
+        int sec;  // смещение имени секции в m_buf
+        int key;  // смещение ключа
+        int val;  // смещение значения
+        int line; // номер строки
+    };
+
+    int store(const char* s, int len); // копия в буфер; -1 -- переполнение
+    int find(const char* key, const char* section) const;
+    bool parseLine(char* s, int lineNo, int* sec);
+
+    char m_buf[INI_BUF];
+    int m_used;
+    Entry m_e[INI_MAX_ENTRIES];
+    int m_n;
+    int m_overflow;
 };
 
 #endif // LIB_CLI_H
