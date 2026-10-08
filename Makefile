@@ -24,4 +24,6 @@ test: build
 	./build/test_integrate
 	$(CXX) $(CXXFLAGS) tests/test_ini.cpp build/libgnc.a -o build/test_ini
 	./build/test_ini
+	$(CXX) $(CXXFLAGS) tests/test_point.cpp -o build/test_point
+	./build/test_point
 

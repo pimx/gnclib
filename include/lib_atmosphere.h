@@ -43,6 +43,15 @@ inline constexpr double G0_STD = 9.80665;       // standard gravity, m/s^2
 inline constexpr double R_AIR = 287.0528;       // gas constant of air, J/(kg K)
 inline constexpr double R_GEOPOT = 6356766.0;   // geopotential radius, m
 
+//  The air at one height (1.4.0): what Temperature, Pressure and Density
+//  return there (EnvAtmosphere::State).
+struct AtmState
+{
+    double t;     // temperature, K (with the offset)
+    double p;     // static pressure, Pa
+    double rho;   // density, kg/m^3
+};
+
 class EnvAtmosphere
 {
 public:
@@ -177,6 +186,65 @@ public:
         double t = Temperature(h);
         double p = Pressure(h);
         return p / (R_AIR * t);
+    }
+
+    //  1.4.0: temperature, pressure and density at once, with one height
+    //  conversion and one layer search -- the same numbers as Temperature,
+    //  Pressure and Density, to the bit (the three calls convert the height
+    //  and search the layers four times).
+    //    h -- geometric height, m
+    AtmState State(double h) const
+    {
+        AtmState r { };
+        if (h <= 0.0)
+        {
+            h = 0.0;
+        }
+        if (h >= Z_TOP)
+        {
+            double z = h < Z_MAX ? h : Z_MAX;
+            double f = 0.0;
+            int k = UpIndex(z, &f);
+            double tu = UpT(k) + f * (UpT(k + 1) - UpT(k));
+            double tIsa = tu + (T_TOP - UpT(0)) * exp(-(z - Z_TOP) / 5000.0);
+            r.t = tIsa + m_dt;
+            if (r.t < 1.0e-3)
+            {
+                r.t = 1.0e-3;
+            }
+            if (h >= Z_MAX)
+            {
+                return r;
+            }
+            r.p = K_P * UpLog(UpP(k), UpP(k + 1), f);
+            r.rho = K_R * UpLog(UpRho(k), UpRho(k + 1), f) * tIsa / r.t;
+            return r;
+        }
+        double hg = GeomToGeopot(h);
+        int i = LayerIndex(hg);
+        double tb = m_lay[i].tb;
+        double lb = m_lay[i].lb;
+        double dh = hg - m_lay[i].hb;
+        double tl = tb + lb * dh;
+        if (tl < 1.0e-3)
+        {
+            tl = 1.0e-3;
+        }
+        r.t = tl + m_dt;
+        if (r.t < 1.0e-3)
+        {
+            r.t = 1.0e-3;
+        }
+        if (fabs(lb) > 1.0e-12)
+        {
+            r.p = m_lay[i].pb * pow(tl / tb, -G0_STD / (R_AIR * lb));
+        }
+        else
+        {
+            r.p = m_lay[i].pb * exp(-G0_STD * dh / (R_AIR * tb));
+        }
+        r.rho = r.p / (R_AIR * r.t);
+        return r;
     }
 
     //  Pressure relative to sea level, clamped to [0, 1] (engine model).
@@ -352,7 +420,16 @@ private:
     //  Row below a geometric height of the upper table, and the fraction.
     static int UpIndex(double z, double* f)
     {
-        int i = 0;
+        //  1.4.0: the rows go every kilometre from UpZ(1); the row is
+        //  guessed from that and then moved by the same test as the search
+        //  from the bottom, so it is the same row (was a search over up to
+        //  56 rows at every call above 95 km).
+        int i = z >= UpZ(1) ? (int)((z - UpZ(1)) / 1000.0) + 1 : 0;
+        i = i < 0 ? 0 : (i > N_UP - 2 ? N_UP - 2 : i);
+        while (i > 0 && z < UpZ(i))
+        {
+            i = i - 1;
+        }
         while (i < N_UP - 2 && z >= UpZ(i + 1))
         {
             i = i + 1;

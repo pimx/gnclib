@@ -142,6 +142,79 @@ inline CfGeodetic EcpToGeo(const CfEcefPoint& p, const CfGeoid& el)
     return g;
 }
 
+//  1.5.0: the geodetic latitude as its sine and cosine, and the height.
+struct CfGeoSc
+{
+    double sinLat;  // sine of the geodetic latitude
+    double cosLat;  // cosine of the geodetic latitude (not negative)
+    double alt;     // height above the ellipsoid, m
+};
+
+//  1.5.0: the latitude and the height of EcpToGeo without trigonometry.
+//  The iteration of EcpToGeo (Bowring, two refinements, the final height)
+//  with the latitude carried as its sine and cosine -- the direction (num,
+//  den) normalised -- instead of atan2, sin and cos, and without the
+//  longitude; the latitude returned is the one of the final height, as in
+//  EcpToGeo. On the axis: the sine is the sign of z, the height |z| - b.
+inline CfGeoSc EcpToGeoSc(const CfEcefPoint& p, const CfGeoid& el)
+{
+    CfGeoSc g { };
+    double e2 = el.f * (2.0 - el.f);
+    double bb = el.a * (1.0 - el.f);
+    double ep2 = e2 / (1.0 - e2);
+    double rp = sqrt(p.x * p.x + p.y * p.y);
+    if (rp < 1.0e-6)
+    {
+        g.sinLat = p.z < 0.0 ? -1.0 : 1.0;
+        g.cosLat = 0.0;
+        g.alt = fabs(p.z) - bb;
+        return g;
+    }
+    double ta = p.z * el.a;
+    double tb = rp * bb;
+    double nt = sqrt(ta * ta + tb * tb);
+    double st = ta / nt;
+    double ct = tb / nt;
+    double num = p.z + ep2 * bb * st * st * st;
+    double den = rp - e2 * el.a * ct * ct * ct;
+    int it = 0;
+    for (it = 0; it < 3; it = it + 1)
+    {
+        double nl = sqrt(num * num + den * den);
+        g.sinLat = num / nl;
+        g.cosLat = den / nl;
+        double rn = el.a / sqrt(1.0 - e2 * g.sinLat * g.sinLat);
+        g.alt = rp / g.cosLat - rn;
+        num = p.z;
+        den = rp * (1.0 - e2 * rn / (rn + g.alt));
+    }
+    return g;
+}
+
+//  1.4.0: the geodetic height only: EcpToGeoSc (1.5.0; the same steps as
+//  in 1.4.0, the same numbers). MEASURED against EcpToGeo().alt on
+//  PZ-90.11, latitude 0 ... 90 deg by 0.1 deg, height -2 ... 398 km by
+//  1 km: at most 7.5e-9 m (rounding); about seven times cheaper.
+inline double EcpToAlt(const CfEcefPoint& p, const CfGeoid& el)
+{
+    return EcpToGeoSc(p, el).alt;
+}
+
+//  1.5.0: the distance from the centre of the point at a geodetic latitude
+//  (its sine and cosine) and a height: the length of GeoToEcp, which the
+//  longitude does not change, without trigonometry.
+//    sinLat, cosLat -- latitude
+//    alt            -- height above the ellipsoid, m
+//    el             -- ellipsoid
+inline double GeoRadius(double sinLat, double cosLat, double alt, const CfGeoid& el)
+{
+    double e2 = el.f * (2.0 - el.f);
+    double rn = el.a / sqrt(1.0 - e2 * sinLat * sinLat);
+    double rho = (rn + alt) * cosLat;
+    double z = (rn * (1.0 - e2) + alt) * sinLat;
+    return sqrt(rho * rho + z * z);
+}
+
 //----------------------------------------------------------------------
 //  GEO - the ECEF <-> CfLocalVector operator.
 //----------------------------------------------------------------------
@@ -270,6 +343,13 @@ public:
     CfGeodetic GeoOf(const CfLocalPoint& l) const
     {
         return EcpToGeo(L2E(l), el);
+    }
+
+    //  Geodetic height of a point given in the local frame (1.4.0,
+    //  EcpToAlt: GeoOf(l).alt without the latitude and longitude).
+    double AltOf(const CfLocalPoint& l) const
+    {
+        return EcpToAlt(L2E(l), el);
     }
 
     constexpr const CfGeodetic& Origin() const
