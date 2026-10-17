@@ -1,7 +1,7 @@
 //============================================================================
 // lib_nav_types.h -- measurement and navigation data of the common ESKF
-// (gnclib 1.1.0; the layouts of the FLY90 / HOP90 msg_sensors.h, which
-// alias these types). C++17, no STL, no heap.
+// (gnclib 1.1.0; the message layouts of a consumer may alias these
+// types). C++17, no STL, no heap.
 //============================================================================
 #ifndef GNCLIB_LIB_NAV_TYPES_H
 #define GNCLIB_LIB_NAV_TYPES_H

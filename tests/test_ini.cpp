@@ -23,7 +23,7 @@ int main()
         "top = 1.5   ; trailing comment\n"
         "[vehicle]\r\n"
         "\tm0\t=  23000.0 # hash comment\r\n"
-        "name = HOP90\n"
+        "name = SAMPLE\n"
         "no equals sign here\n"
         "[ sim ]\n"
         "m0 = 21000\n"
@@ -37,7 +37,7 @@ int main()
     Check("section lookup (vehicle m0 = 23000)", ini.getDouble("m0", 0.0, "vehicle") == 23000.0);
     Check("section name trimmed ([ sim ])", ini.getInt("m0", 0, "sim") == 21000);
     char v[CLI_VALUE_MAX];
-    Check("string value", ini.getValue("name", v) && strcmp(v, "HOP90") == 0);
+    Check("string value", ini.getValue("name", v) && strcmp(v, "SAMPLE") == 0);
     Check("empty value present", ini.hasKey("empty") && ini.value(4)[0] == 0);
     Check("missing key -> default", ini.getDouble("nokey", 7.0) == 7.0);
     Check("line numbers", ini.line(1) == 4);

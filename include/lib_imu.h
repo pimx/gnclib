@@ -1,6 +1,6 @@
 //============================================================================
 // lib_imu.h -- ideal strapdown IMU readings for a site-fixed (rotating
-// Earth) frame (gnclib 1.1.0; from HOP90 V90.34). Noise and biases are
+// Earth) frame (gnclib 1.1.0). Noise and biases are
 // added by the caller.
 //   gyro  = body rate relative to the Earth + Earth rate (body axes);
 //   accel = a_rel + 2 Omega x v - g(r) (body axes) + eps x r + w x (w x r)

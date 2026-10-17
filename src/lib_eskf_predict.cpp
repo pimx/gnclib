@@ -1,12 +1,14 @@
-// gnclib 1.1.0: navigation ESKF (moved from FLY90 / HOP90 V90.43, with
-// the Earth rate, IMU-lever noise and gate recovery of HOP90).
+// gnclib 1.1.0: navigation ESKF (with the Earth rate, IMU-lever noise and
+// gate recovery).
 //============================================================================
-// eskf_predict.cpp -- ESKF: настройка, инициализация, такт
+// lib_eskf_predict.cpp -- ESKF: настройка, инициализация, такт
 // комплексирования (компенсация смещений, рычаг ИНС, механизация БИНС,
 // адаптивный процессный шум), распространение ковариации.
 //============================================================================
 #include "lib_eskf.h"
 #include "lib_earth.h"
+
+#include <stdio.h>
 
 namespace gnc
 {
@@ -34,9 +36,14 @@ Eskf::Eskf()
 }
 
 // Настройка: шумы, площадка, тяжесть, рычаг высотомера.
-void Eskf::setup(const Config& c, const gnc::GEO* frame, double gravity,
+bool Eskf::setup(const Config& c, const gnc::GEO* frame, double gravity,
                  gnc::CfBodyVector leverBody)
 {
+    const char* miss = c.missing();
+    if (miss != 0)
+    {
+        fprintf(stderr, "gnc::Eskf::setup: Config.%s is not set\n", miss);
+    }
     m_cfg = c;
     m_frame = frame;
     m_g = gravity;
@@ -44,6 +51,7 @@ void Eskf::setup(const Config& c, const gnc::GEO* frame, double gravity,
     m_imuLever = mkBody(0.0, 0.0, 0.0); // задаётся setImuLever
     m_wPrevLever = mkBody(0.0, 0.0, 0.0);
     m_leverInit = false;
+    return miss == 0;
 }
 
 // Инициализация точно известным начальным состоянием; начальная
@@ -106,8 +114,9 @@ void Eskf::leverCompensate(const gnc::CfBodyVector& w, gnc::CfBodyVector* a,
     gnc::CfBodyVector wDot = mkBody(0.0, 0.0, 0.0);
     if (m_leverInit && dt > 1e-9)
     {
-        // V90.35: производная гироскопа сглаживается (20 мс) -- импульсы
-        // РСУ и изгиб корпуса иначе дают ложные ускорения на рычаге ИНС
+        // производная гироскопа сглаживается (wDotTau) -- импульсы
+        // двигателей ориентации и изгиб корпуса иначе дают ложные ускорения
+        // на рычаге ИНС
         gnc::CfBodyVector raw = scale(sub(w, m_wPrevLever), 1.0 / dt);
         double k = (m_cfg.wDotTau > 1e-9) ? 1.0 - exp(-dt / m_cfg.wDotTau) : 1.0;
         gnc::CfBodyVector dw = sub(raw, m_wDotF);
@@ -118,7 +127,7 @@ void Eskf::leverCompensate(const gnc::CfBodyVector& w, gnc::CfBodyVector* a,
         double kv = 1.0 - exp(-dt / 0.02);
         gnc::CfBodyVector dv = sub(raw, m_wDotV);
         m_wDotV = add(m_wDotV, scale(dv, kv));
-        // V90.36 шум рычага: сглаживание не успевает за импульсами РСУ и
+        // шум рычага: сглаживание не успевает за импульсами двигателей и
         // изгибом -- остаток (dw) на рычаге r даёт ошибку компенсации
         // ускорения ~ |dw| |r|; его дисперсия (0.2 с) идёт в шум процесса
         double ks = 1.0 - exp(-dt / 0.2);
@@ -152,7 +161,7 @@ void Eskf::update(NavData& outNav, const ImuData& imu, const GnssData& gnss,
     gnc::CfBodyVector a = sub(imu.accel, m_ba);
     leverCompensate(w, &a, dt);
 
-    // механизация БИНС (V90.34: вращающаяся Земля -- поле тяжести в
+    // механизация БИНС (вращающаяся Земля -- поле тяжести в
     // оценке положения, кориолисово ускорение, угловая скорость Земли)
     Mat3 Reb = m_R;
     gnc::CfLocalVector gL = mkLoc(0.0, 0.0, -m_g);
@@ -278,7 +287,7 @@ void Eskf::propagate(const Mat3& Reb, const gnc::CfBodyVector& a,
     // Qd (диагональ); dv и dTheta -- с манёвренным масштабом
     double qv = m_cfg.accelNoiseStd * dt;
     qv = qv * qv * qScale;
-    // V90.36 шум рычага ИНС: sigma_a = sigma_wdot |r| (адаптивно)
+    // шум рычага ИНС: sigma_a = sigma_wdot |r| (адаптивно)
     if (m_cfg.leverNoise != 0)
     {
         double sigL = m_cfg.leverNoiseK * sqrt(fmax(m_wDotVar, 0.0)) * norm(m_imuLever) * dt;

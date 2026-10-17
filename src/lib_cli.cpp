@@ -502,8 +502,7 @@ static int cliIpv4(const char* s, int n)
     return (parts == 4) ? 1 : 0;
 }
 
-// Сетевой адрес из значения ключа (см. lib_cli.h; перенесено из
-// tlm90Endpoint проектов без изменения логики).
+// Сетевой адрес из значения ключа (см. lib_cli.h).
 bool Cli::parseEndpoint(const char* s, char addr[], int addrSize, int* port,
                         const char* defAddr, int defPort)
 {
@@ -588,7 +587,7 @@ bool Cli::parseEndpoint(const char* s, char addr[], int addrSize, int* port,
 }
 
 // Элемент index списка через запятую (без пробелов по краям не
-// обрезается -- как прежние разборщики FLY90).
+// обрезается).
 bool Cli::listItem(const char* s, int index, char item[])
 {
     item[0] = 0;

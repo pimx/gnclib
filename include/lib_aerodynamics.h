@@ -1,8 +1,9 @@
 //======================================================================
 //  lib_aerodynamics.h
-//  EnvAeroforces - aerodynamic force models for all flight regimes of the vehicle
-//  line: constant-Cd drag, landing drag law Cx(M) with retro-plume
-//  shielding, strip model of a cylinder, fin authority, ground effect.
+//  EnvAeroforces - aerodynamic force models: constant-Cd drag, retro-plume
+//  shielding, Prandtl-Glauert correction, ground effect, strip model of a
+//  cylinder. Coefficients and their Mach dependence belong to the caller
+//  (1.6.0: the tabulated Cx(M) of particular bodies left the library).
 //
 //  Frames: drag is COLLINEAR with the air velocity, so it is given as
 //  two overloads - in body axes (CfBodyVector) and in local axes (CfLocalVector); the
@@ -73,96 +74,7 @@ public:
         return Scale(vAir, -f / v);
     }
 
-    //-- landing drag law --------------------------------------------
-
-    //  Landing Cx(M) of a blunt base: tabulated (transonic hump on a
-    //  supersonic plateau), linear interpolation, nearest node outside
-    //  the table. The table is a discretization of the former analytic
-    //  fit and is to be replaced by tunnel data without code changes.
-    static double CxMachLanding(double mach)
-    {
-        static constexpr double tabM[] =
-        {
-            0.0, 0.3, 0.6, 0.8, 0.9, 1.0,
-            1.1, 1.2, 1.4, 1.6, 2.0, 2.5,
-            3.0, 4.0, 5.0, 6.0, 10.0
-        };
-        static constexpr double tabCx[] =
-        {
-            1.5212, 1.5102, 1.5506, 1.6460, 1.6870, 1.6964,
-            1.6653, 1.6029, 1.4659, 1.3886, 1.3332, 1.2940,
-            1.2715, 1.2546, 1.2509, 1.2502, 1.2500
-        };
-        const int n = (int)(sizeof(tabM) / sizeof(tabM[0]));
-        if (mach <= tabM[0])
-        {
-            return tabCx[0];
-        }
-        if (mach >= tabM[n - 1])
-        {
-            return tabCx[n - 1];
-        }
-        int i = 0;
-        while (i < n - 2 && mach > tabM[i + 1])
-        {
-            i = i + 1;
-        }
-        double f = (mach - tabM[i]) / (tabM[i + 1] - tabM[i]);
-        return tabCx[i] + (tabCx[i + 1] - tabCx[i]) * f;
-    }
-
-    //  Ascent Cx(M) of a cone-cylinder with a nose fairing: tabulated
-    //  (subsonic plateau, transonic hump, supersonic decay), linear
-    //  interpolation, nearest node outside the table. A generic curve
-    //  to be replaced by tunnel data without code changes.
-    static double CxMachAscent(double mach)
-    {
-        static constexpr double tabM[] =
-        {
-            0.0, 0.5, 0.8, 0.9, 1.0, 1.05,
-            1.1, 1.2, 1.4, 1.8, 2.5, 3.5,
-            5.0, 8.0
-        };
-        static constexpr double tabCx[] =
-        {
-            0.280, 0.270, 0.300, 0.360, 0.480, 0.550,
-            0.560, 0.540, 0.480, 0.400, 0.330, 0.290,
-            0.260, 0.250
-        };
-        const int n = (int)(sizeof(tabM) / sizeof(tabM[0]));
-        if (mach <= tabM[0])
-        {
-            return tabCx[0];
-        }
-        if (mach >= tabM[n - 1])
-        {
-            return tabCx[n - 1];
-        }
-        int i = 0;
-        while (i < n - 2 && mach > tabM[i + 1])
-        {
-            i = i + 1;
-        }
-        double f = (mach - tabM[i]) / (tabM[i + 1] - tabM[i]);
-        return tabCx[i] + (tabCx[i + 1] - tabCx[i]) * f;
-    }
-
-    //  Relative Mach correction of the axial Cx: 1.0 below M = 0.3
-    //  (incompressible), above - growth by CxMachLanding normalized to
-    //  the subsonic value.
-    static double MachFactorAxial(double mach)
-    {
-        if (mach <= 0.3)
-        {
-            return 1.0;
-        }
-        double f = CxMachLanding(mach) / CxMachLanding(0.3);
-        if (f > 1.0)
-        {
-            return f;
-        }
-        return 1.0;
-    }
+    //-- corrections ---------------------------------------------------
 
     //  Retro-plume shielding: Cx_eff = Cx (1 - k thrFrac), floor 5% of
     //  Cx keeps the integration well-posed; k <= 0 or engine off - Cx.
@@ -230,91 +142,29 @@ public:
         return f;
     }
 
-    //  Magnitude of the landing drag, N: Cx(M) with retro-plume
-    //  reduction (scalar kernel of the overloads below).
-    double DragLandingMagnitude(double h, double v, double aRef,
-                                double retroPlumeK, double thrFrac) const
-    {
-        double rho = m_atm.Density(h);
-        if (v < 1.0e-6 || rho <= 0.0)
-        {
-            return 0.0;
-        }
-        double mach = m_atm.Mach(h, v);
-        double cx = CxRetroPlume(CxMachLanding(mach), retroPlumeK, thrFrac);
-        return 0.5 * rho * v * v * cx * aRef;
-    }
-
-    //  Landing drag force against the air velocity; thrFrac in [0, 1].
-    CfBodyVector DragLanding(double h, const CfBodyVector& vAir, double aRef,
-                    double retroPlumeK, double thrFrac) const
-    {
-        double v = Norm(vAir);
-        double f = DragLandingMagnitude(h, v, aRef, retroPlumeK, thrFrac);
-        CfBodyVector z { };
-        if (f <= 0.0)
-        {
-            return z;
-        }
-        return Scale(vAir, -f / v);
-    }
-
-    CfLocalVector DragLanding(double h, const CfLocalVector& vAir, double aRef,
-                    double retroPlumeK, double thrFrac) const
-    {
-        double v = Norm(vAir);
-        double f = DragLandingMagnitude(h, v, aRef, retroPlumeK, thrFrac);
-        CfLocalVector z { };
-        if (f <= 0.0)
-        {
-            return z;
-        }
-        return Scale(vAir, -f / v);
-    }
-
-    //  Scalar landing DECELERATION, m/s^2, for point predictions:
-    //  a = q Cx(M) A / m (with plume reduction). For planner/onboard.
-    double DragDecelLanding(double h, double v, double aRef, double mass,
-                            double retroPlumeK, double thrFrac) const
-    {
-        if (mass < 1.0)
-        {
-            mass = 1.0;
-        }
-        return DragLandingMagnitude(h, v, aRef, retroPlumeK, thrFrac) / mass;
-    }
-
-    //  Maximum lateral force of a PAIR of fins at full deflection, N:
-    //  2 q Cl_delta A_fin delta_max (two effective panels per axis).
-    double FinForceMax(double h, double v, double finArea, double finClDelta,
-                       double finMaxDeg) const
-    {
-        double q = m_atm.DynamicPressure(h, v);
-        double dmax = finMaxDeg * PI / 180.0;
-        return 2.0 * q * finClDelta * finArea * dmax;
-    }
-
     //-- strip model of a cylinder -----------------------------------
 
     //  Cylinder body in CfBodyVector axes (body axis bu to the nose, be and bn
     //  lateral). Lateral flow over nStrips strips with local velocity
     //  v + w x r (gives lateral force, wind overturning moment and
     //  rotation damping automatically) + axial drag over the midsection
-    //  with the Mach correction and retro-plume shielding on descent
-    //  (vRel.bu < 0: flow onto the tail).
-    //      vRel   - vehicle velocity relative to the air, CfBodyVector, m/s
+    //  with retro-plume shielding when the flow comes onto the tail
+    //  (vRel.bu < 0). 1.6.0: the axial coefficient is given as it acts --
+    //  a Mach correction, if the body needs one, is the caller's (the
+    //  argument mach of 1.5.0 is gone).
+    //      vRel   - body velocity relative to the air, CfBodyVector, m/s
     //      omg    - angular rate, CfBodyOmega, rad/s
     //      rho    - air density, kg/m^3
-    //      mach   - Mach number of the air speed
     //      thrFrac - thrust/maximum in [0, 1] for the plume shielding
     //      length, radius - cylinder geometry, m
     //      cmFromTail - CoM from the tail, m
-    //      cdLateral, cdAxial - drag coefficients
+    //      cdLateral - lateral drag coefficient
+    //      cdAxial - axial drag coefficient as it acts (0 - no axial term)
     //      retroPlumeK - shielding coefficient (0 - off)
     //      nStrips - number of strips, clamped to [1, 32]
     //  Returns the force (CfBodyVector) and the moment about the CoM (CfBodyMoment).
     void CylinderStrip(const CfBodyVector& vRel, const CfBodyOmega& omg, double rho,
-                       double mach, double thrFrac, double length,
+                       double thrFrac, double length,
                        double radius, double cmFromTail, double cdLateral,
                        double cdAxial, double retroPlumeK, int nStrips,
                        CfBodyVector* force, CfBodyMoment* moment) const
@@ -344,7 +194,7 @@ public:
         //  the arm of a strip is r = xi bu, so omega x r = (w.bn xi,
         //  -w.be xi, 0) and r x df = (-xi df.bn, xi df.be, 0) in (be, bn,
         //  bu); the terms of the general products with a zero factor are
-        //  left out -- the sums are the same (MEASURED: the EGL90 records
+        //  left out -- the sums are the same (MEASURED: consumer records
         //  identical to the bit), the loop about a third cheaper.
         double k = -0.5 * rho * cdLateral * dia * dx;
         double fe = 0.0;
@@ -380,12 +230,12 @@ public:
             //  1.4.0: no axial term asked for -- it would add a zero.
             return;
         }
-        //  Axial drag over the midsection: Mach correction; on descent
-        //  (air flow onto the tail, vRel.bu < 0) the retro plume faces
-        //  the flow and shields the base.
+        //  Axial drag over the midsection; with the air flow onto the tail
+        //  (vRel.bu < 0) the retro plume faces the flow and shields the
+        //  base.
         double aAx = PI * radius * radius;
         double vx = vRel.bu;
-        double cdAx = cdAxial * MachFactorAxial(mach);
+        double cdAx = cdAxial;
         if (vx < 0.0)
         {
             cdAx = CxRetroPlume(cdAx, retroPlumeK, thrFrac);

@@ -94,8 +94,8 @@ static void TestHeight()
     Check("EcpToAlt: the pole as EcpToGeo", EcpToAlt(pole, el) == EcpToGeo(pole, el).alt);
     GEO geo;
     CfGeodetic org { };
-    org.lat = 62.925 * PI / 180.0;
-    org.lon = 40.578 * PI / 180.0;
+    org.lat = 45.0 * PI / 180.0;
+    org.lon = 30.0 * PI / 180.0;
     org.alt = 100.0;
     geo.SetOrigin(org);
     CfLocalPoint l { };
@@ -204,20 +204,20 @@ static void TestStrips()
         int strips = 1 + n % 32;
         CfBodyVector f { };
         CfBodyMoment m { };
-        aero.CylinderStrip(v, w, rho, 2.0, 0.5, len, 1.85, cm, 1.2, 0.0, 0.0, strips, &f, &m);
+        aero.CylinderStrip(v, w, rho, 0.5, len, 1.5, cm, 1.2, 0.0, 0.0, strips, &f, &m);
         CfBodyVector fr { };
         CfBodyMoment mr { };
-        StripRef(v, w, rho, len, 1.85, cm, 1.2, strips, &fr, &mr);
+        StripRef(v, w, rho, len, 1.5, cm, 1.2, strips, &fr, &mr);
         bad = bad + (SameFm(f, m, fr, mr) ? 0 : 1);
         CfBodyVector f1 { };
         CfBodyMoment m1 { };
         CfBodyVector f0 { };
         CfBodyMoment m0 { };
-        aero.CylinderStripPair(v, w, rho, len, 1.85, cm, 1.2, strips, &f1, &m1, &f0, &m0);
+        aero.CylinderStripPair(v, w, rho, len, 1.5, cm, 1.2, strips, &f1, &m1, &f0, &m0);
         CfBodyOmega still { };
         CfBodyVector fs { };
         CfBodyMoment ms { };
-        aero.CylinderStrip(v, still, rho, 2.0, 0.5, len, 1.85, cm, 1.2, 0.0, 0.0, strips, &fs, &ms);
+        aero.CylinderStrip(v, still, rho, 0.5, len, 1.5, cm, 1.2, 0.0, 0.0, strips, &fs, &ms);
         badPair = badPair + (SameFm(f1, m1, f, m) && SameFm(f0, m0, fs, ms) ? 0 : 1);
     }
     printf("  20000 random bodies: strip loop %ld differ, pair %ld differ\n", bad, badPair);

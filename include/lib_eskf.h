@@ -1,15 +1,15 @@
-// gnclib 1.1.0: navigation ESKF (moved from FLY90 / HOP90 V90.43, with
-// the Earth rate, IMU-lever noise and gate recovery of HOP90).
+// gnclib 1.1.0: navigation ESKF (with the Earth rate, IMU-lever noise and
+// gate recovery).
 //============================================================================
-// eskf.h -- HOP90 (перенос FLY90 V90.4 models/eskf.h; добавлен
-// радиовысотомер) -- комплексирование ИНС / СНС / высотомеров: фильтр Калмана в
+// lib_eskf.h -- комплексирование ИНС / СНС / высотомеров (лазерный и
+// радиовысотомер): фильтр Калмана в
 // пространстве ошибок (ESKF, 15 состояний):
 //   [ dp(3) dv(3) dTheta(3) dba(3) dbg(3) ]
 // dp, dv -- ошибки положения и скорости на площадке; dTheta -- малый
 // поворот ошибки ориентации в осях BODY (правое умножение:
 // R_ист = R_оц * exp([dTheta]x)); dba, dbg -- ошибки оценок смещений.
 //
-// Механизация БИНС на каждом такте ИНС (400 Гц); ковариация --
+// Механизация БИНС на каждом такте ИНС; ковариация --
 // дискретизация 1-го порядка Fd = I + F*dt. Коррекции ПОСЛЕДОВАТЕЛЬНО
 // ПО СКАЛЯРАМ (обращения матриц нет; после каждой ошибка вводится в
 // номинал). СНС -- позиция и скорость ENU, 6 скаляров; высотомер --
@@ -17,8 +17,9 @@
 // Джозефа): один луч не разделяет высоту и наклон. Адаптивный
 // процессный шум при манёврах (пик-удержание с распадом ~1.5 с).
 //
-// Реализация: eskf_predict.cpp (настройка, механизация, ковариация),
-// eskf_update.cpp (скалярные коррекции). Матричная форма -- eskf_math.h.
+// Реализация: lib_eskf_predict.cpp (настройка, механизация, ковариация),
+// lib_eskf_update.cpp (скалярные коррекции). Матричная форма --
+// lib_eskf_math.h.
 //============================================================================
 #ifndef GNCLIB_LIB_ESKF_H
 #define GNCLIB_LIB_ESKF_H
@@ -40,12 +41,12 @@ public:
     // Параметры шумов фильтра.
     struct Config
     {
-        // gnclib 1.1.0 (HOP90): lever of the IMU -- smoothing of the gyro
-        // derivative (s; 0 -- the raw derivative, as FLY90) and the adaptive
-        // lever noise in the velocity process noise (0 -- off, as FLY90)
+        // lever of the IMU -- smoothing of the gyro derivative (s; 0 -- the
+        // raw derivative) and the adaptive lever noise in the velocity
+        // process noise (0 -- off)
         double wDotTau = 0.0;
         int leverNoise = 0;
-        double leverNoiseK = 1.0; // scale of the lever noise sigma (FLY90 tuning)
+        double leverNoiseK = 1.0; // scale of the lever noise sigma
         double gyroNoiseStd;  // СКО гироскопов на такте, рад/с
         double accelNoiseStd; // СКО акселерометров на такте, м/с^2
         double gyroBiasRw;    // блуждание смещения гироскопов, рад/с/sqrt(такт)
@@ -56,13 +57,37 @@ public:
         double raltNoiseStd;  // СКО радиовысотомера: постоянная часть, м
         double raltNoiseRel;  // СКО радиовысотомера: доля дальности
 
-        // Конструктор: значения по умолчанию (переопределяет модель
-        // датчиков от паспортов).
+        // Конструктор (1.6.0): шумы датчиков НЕ ЗАДАНЫ (NaN) -- их задаёт
+        // потребитель по своим датчикам; setup() отказывает, пока хотя бы
+        // один не задан (у библиотеки нет характеристик конкретных датчиков).
         Config()
-            : gyroNoiseStd(3e-4), accelNoiseStd(8e-3), gyroBiasRw(5e-7),
-              accelBiasRw(5e-6), gnssPosStd(0.1), gnssVelStd(0.05),
-              altNoiseStd(0.02), raltNoiseStd(0.6), raltNoiseRel(0.01)
+            : gyroNoiseStd(NAN), accelNoiseStd(NAN), gyroBiasRw(NAN),
+              accelBiasRw(NAN), gnssPosStd(NAN), gnssVelStd(NAN),
+              altNoiseStd(NAN), raltNoiseStd(NAN), raltNoiseRel(NAN)
         {
+        }
+
+        // Первое незаданное (NaN или отрицательное) поле шумов; 0 -- все
+        // заданы.
+        const char* missing() const
+        {
+            const double v[9] = { gyroNoiseStd, accelNoiseStd, gyroBiasRw,
+                                  accelBiasRw, gnssPosStd, gnssVelStd,
+                                  altNoiseStd, raltNoiseStd, raltNoiseRel };
+            static const char* const name[9] = { "gyroNoiseStd", "accelNoiseStd",
+                                                 "gyroBiasRw", "accelBiasRw",
+                                                 "gnssPosStd", "gnssVelStd",
+                                                 "altNoiseStd", "raltNoiseStd",
+                                                 "raltNoiseRel" };
+            int i = 0;
+            for (i = 0; i < 9; ++i)
+            {
+                if (!(v[i] >= 0.0))
+                {
+                    return name[i];
+                }
+            }
+            return 0;
         }
     };
 
@@ -73,8 +98,8 @@ public:
     // omgDot x r + omg x (omg x r); без её вычитания угловые манёвры
     // подмешиваются в линейный канал.
     //   r -- точка установки ИНС (связанная), м
-    // Установка рычага высотомера относительно ЦМ (V90.14: ЦМ смещается при
-    // выработке топлива).
+    // Установка рычага высотомера относительно ЦМ (ЦМ может смещаться,
+    // например при выработке топлива).
     //   r -- высотомер относительно ЦМ (связанная), м
     void setAltLever(const gnc::CfBodyVector& r)
     {
@@ -87,9 +112,12 @@ public:
     }
 
     // Настройка фильтра.
-    //   c -- шумы; frame -- площадка (ENU <-> ECEF); gravity -- тяжесть
-    //   площадки, м/с^2; leverBody -- высотомер относительно ЦМ, м
-    void setup(const Config& c, const gnc::GEO* frame, double gravity,
+    //   c -- шумы (все поля обязательны); frame -- площадка (ENU <-> ECEF);
+    //   gravity -- тяжесть площадки, м/с^2; leverBody -- высотомер
+    //   относительно ЦМ, м
+    // Возвращает false и печатает в stderr имя поля, если шум не задан
+    // (1.6.0; прежде были умолчания).
+    bool setup(const Config& c, const gnc::GEO* frame, double gravity,
                gnc::CfBodyVector leverBody);
 
     // Инициализация точно известным начальным состоянием.
@@ -180,9 +208,9 @@ private:
     gnc::CfBodyVector m_bg;         // смещение гироскопов (связанная)
     double m_P[N][N];               // ковариация ошибок
     int m_rejectRun[N];             // подряд отброшенных стробом измерений -- по компоненте (1.1.1)
-    gnc::CfBodyVector m_wDotF;      // V90.35: сглаженное угловое ускорение (рычаг ИНС)
+    gnc::CfBodyVector m_wDotF;      // сглаженное угловое ускорение (рычаг ИНС)
     double m_wDotVar;
-    gnc::CfBodyVector m_wDotV;      // 20 ms smoothed derivative for the lever noise variance               // V90.36: дисперсия неучтённого углового ускорения, (рад/с^2)^2
+    gnc::CfBodyVector m_wDotV;      // производная, сглаженная 20 мс, для дисперсии шума рычага
 };
 
 }   // namespace gnc

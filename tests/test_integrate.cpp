@@ -163,10 +163,10 @@ int main()
         double order = log(err[0] / err[1]) / log(2.0);
         Check("(d) spring on position: convergence order - 4", order - 4.0, 0.15);
     }
-    // (e) free fall from 100 m at 55 N: east deflection (1/3) w g t^3 cos(lat)
+    // (e) free fall from 100 m at 45 N: east deflection (1/3) w g t^3 cos(lat)
     {
         GEO geo;
-        geo.SetOrigin(mkGdt(55.0 * PI / 180.0, 37.5 * PI / 180.0, 150.0));
+        geo.SetOrigin(mkGdt(45.0 * PI / 180.0, 30.0 * PI / 180.0, 100.0));
         CtxEarth k { &geo };
         CfBodyOmega w0 { };
         VehState s = Init(0.0, 0.0, w0);
@@ -180,9 +180,9 @@ int main()
             s = IntegrateRK4(s, 0, 0.001, FnEarth, &k);
             t += 0.001;
         }
-        double g = GravityNormalWgs84(55.0 * PI / 180.0, 150.0);
+        double g = GravityNormalWgs84(45.0 * PI / 180.0, 100.0);
         double tf = sqrt(2.0 * 100.0 / g);
-        double east = OMEGA_E * g * tf * tf * tf * cos(55.0 * PI / 180.0) / 3.0;
+        double east = OMEGA_E * g * tf * tf * tf * cos(45.0 * PI / 180.0) / 3.0;
         printf("    free fall %.3f s: east %.3f mm (analytic %.3f mm)\n", t, s.PosLop().e * 1e3,
                east * 1e3);
         Check("(e) Coriolis free fall: relative east deflection error", s.PosLop().e / east - 1.0,
