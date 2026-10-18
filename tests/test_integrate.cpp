@@ -1,5 +1,5 @@
 // test_integrate.cpp -- gnclib 1.1.0: IntegrateRK4 (stage forces, aux
-// states) and the rotating Earth (lib_earth.h).
+// states) and the rotating Earth (lib_earth.h); 1.7.1: attitude order (f).
 // Build: g++ -std=c++17 -O2 -Iinclude tests/test_integrate.cpp -o build/test_integrate
 #include "lib.h"
 #include "lib_integrate.h"
@@ -85,6 +85,42 @@ static VehState Init(double pe, double vn, const CfBodyOmega& w)
     CfRotation att = s.Att();
     CfBodyOmegaAcc e { };
     s.SetAngular(att, w, e);
+    return s;
+}
+
+// (f) torque-free body: angle between two attitudes (vector part of
+// conj(a) * b, accurate for small angles), rad.
+static double AngleBetween(const CfRotation& a, const CfRotation& b)
+{
+    double cx = a.Qe() * b.Qu() - a.Qu() * b.Qe();
+    double cy = a.Qu() * b.Qn() - a.Qn() * b.Qu();
+    double cz = a.Qn() * b.Qe() - a.Qe() * b.Qn();
+    double vx = a.Qw() * b.Qn() - b.Qw() * a.Qn() - cx;
+    double vy = a.Qw() * b.Qe() - b.Qw() * a.Qe() - cy;
+    double vz = a.Qw() * b.Qu() - b.Qw() * a.Qu() - cz;
+    return 2.0 * sqrt(vx * vx + vy * vy + vz * vz);
+}
+
+// (f) angular momentum in the LOCAL axes (depends on the attitude).
+static CfLocalVector HLocal(const VehState& s, const INR& j)
+{
+    const CfBodyOmega& w = s.OmgBdw();
+    CfBodyVector hb { };
+    hb.bn = j.j_bnbn * w.bn;
+    hb.be = j.j_bebe * w.be;
+    hb.bu = j.j_bubu * w.bu;
+    return s.Att().B2L(hb);
+}
+
+// (f) torque-free run of T seconds with the step dt from the rate w0.
+static VehState RunFree(CtxConst* k, const CfBodyOmega& w0, double dt, double T)
+{
+    VehState s = Init(0.0, 0.0, w0);
+    int n = (int)(T / dt + 0.5);
+    for (int i = 0; i < n; ++i)
+    {
+        s = IntegrateRK4(s, 0, dt, FnFree, k);
+    }
     return s;
 }
 
@@ -190,6 +226,30 @@ int main()
         CfLocalVector gl = EarthGravityLoc(geo, mkLop(0.0, 0.0, 0.0));
         Check("(e) |g| at the site vs GravityNormalWgs84, m/s^2",
               sqrt(gl.e * gl.e + gl.n * gl.n + gl.u * gl.u) - g, 1e-3);
+    }
+    // (f) torque-free asymmetric body tumbling at about 2.3 rad/s: the
+    // attitude converges with the 4th order (RKMK4, 1.7.1; up to 1.7.0 --
+    // 2nd), the angular momentum in the LOCAL axes is conserved
+    {
+        CtxConst k { };
+        k.inr = Inr(1.0, 1.0, 2.0, 3.0);
+        CfBodyOmega w0 { };
+        w0.bu = 0.7;
+        w0.be = 2.0;
+        w0.bn = -1.0;
+        VehState ref = RunFree(&k, w0, 1.0e-4, 10.0);
+        VehState s1 = RunFree(&k, w0, 0.02, 10.0);
+        VehState s2 = RunFree(&k, w0, 0.01, 10.0);
+        double e1 = AngleBetween(s1.Att(), ref.Att());
+        double e2 = AngleBetween(s2.Att(), ref.Att());
+        printf("    attitude error after 10 s: dt 20 ms %.3e rad, dt 10 ms %.3e rad\n", e1, e2);
+        Check("(f) torque-free: attitude convergence order - 4", log(e1 / e2) / log(2.0) - 4.0, 0.3);
+        VehState s0 = Init(0.0, 0.0, w0);
+        VehState s3 = RunFree(&k, w0, 0.002, 20.0);
+        CfLocalVector h0 = HLocal(s0, k.inr);
+        CfLocalVector h3 = HLocal(s3, k.inr);
+        Check("(f) dt 2 ms, 20 s: rel. drift of H, local axes",
+              Norm(Sub(h3, h0)) / Norm(h0), 1.0e-11);
     }
     printf(g_bad == 0 ? "TEST_INTEGRATE PASS\n" : "TEST_INTEGRATE FAIL\n");
     return g_bad;

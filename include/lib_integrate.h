@@ -10,10 +10,16 @@
 //     moment about the CoM in the BODY axes d.mom, the mass properties
 //     d.inr at that state and the derivatives of the auxiliary states
 //     d.xdot[0 .. aux.n - 1].
-// Stages (classic RK4): translation and body rate by RK4; the attitude of
-// the stages k = 2, 3, 4 is propagated from the initial one by the rate of
-// the previous stage; the final attitude -- the exponential map of the
-// RK4-weighted rate. Stored accelerations belong to the new time.
+// Stages (classic RK4): translation and body rate by RK4; the attitude by
+// RKMK4 (Munthe-Kaas, 1.7.1): the rotation vector th of the step obeys the
+// Bortz equation th' = w + th x w / 2 + th x (th x w) / 12 (body rate w,
+// right multiplication); its RK4 slopes k_i = dexp^-1(th_i, w_i) carry the
+// non-commutativity (coning) term, the stages k = 2, 3, 4 start from the
+// initial attitude turned by th_i = c_i dt k_(i-1), the final attitude --
+// the exponential map of dt (k1 + 2 k2 + 2 k3 + k4) / 6. Up to 1.7.0 the
+// slopes were the bare rates w_i: 2nd order in the attitude for a rate
+// that changes its direction (bitwise the same for a rotation about one
+// axis). Stored accelerations are the RK4 means over the step.
 // The existing Integrate (lib_dynamics.h, forces constant over the step)
 // stays as the light option. C++17, no STL, no heap.
 //============================================================================
@@ -46,6 +52,30 @@ typedef void (*DynFn)(void* ctx, const VehState& s, const AuxState& aux, DynDeri
 
 namespace detail
 {
+// Slope of the rotation vector at a stage (Bortz, dexp^-1 to 2nd order --
+// enough for RKMK4): k = w + th x w / 2 + th x (th x w) / 12, th = kPrev tau.
+//   kPrev -- slope of the previous stage, rad/s; tau -- stage time, s;
+//   w -- body rate at the stage, rad/s
+inline CfBodyOmega RotSlope(const CfBodyOmega& kPrev, double tau, const CfBodyOmega& w)
+{
+    double tn = kPrev.bn * tau;
+    double te = kPrev.be * tau;
+    double tu = kPrev.bu * tau;
+    // a = th x w, right-handed order (bu, be, bn)
+    double au = te * w.bn - tn * w.be;
+    double ae = tn * w.bu - tu * w.bn;
+    double an = tu * w.be - te * w.bu;
+    // b = th x a
+    double bu = te * an - tn * ae;
+    double be = tn * au - tu * an;
+    double bn = tu * ae - te * au;
+    CfBodyOmega k { };
+    k.bn = w.bn + 0.5 * an + bn / 12.0;
+    k.be = w.be + 0.5 * ae + be / 12.0;
+    k.bu = w.bu + 0.5 * au + bu / 12.0;
+    return k;
+}
+
 inline CfLocalVector LinAcc(const DynDeriv& d)
 {
     double m = (d.inr.m < 1.0e-9) ? 1.0e-9 : d.inr.m;
@@ -116,6 +146,7 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     fn(ctx, s2, ak, &d2);
     CfLocalVector a2 = detail::LinAcc(d2);
     CfBodyOmegaAcc e2 = EpsOf(d2.inr, d2.mom, w2);
+    CfBodyOmega k2 = detail::RotSlope(w0, h, w2);
     // stage 3 (dt / 2)
     CfLocalVector dv3 { a2.n * h, a2.e * h, a2.u * h };
     CfBodyOmega w3 = AdvanceRate(w0, e2, h);
@@ -123,10 +154,11 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     {
         ak.x[i] = a0.x[i] + d2.xdot[i] * h;
     }
-    VehState s3 = detail::Stage(s, h, dv3, v2, w3, w2, a2, e2);
+    VehState s3 = detail::Stage(s, h, dv3, v2, w3, k2, a2, e2);
     fn(ctx, s3, ak, &d3);
     CfLocalVector a3 = detail::LinAcc(d3);
     CfBodyOmegaAcc e3 = EpsOf(d3.inr, d3.mom, w3);
+    CfBodyOmega k3 = detail::RotSlope(k2, h, w3);
     // stage 4 (dt)
     CfLocalVector dv4 { a3.n * dt, a3.e * dt, a3.u * dt };
     CfLocalVector v3 { v0.n + dv3.n, v0.e + dv3.e, v0.u + dv3.u };
@@ -135,10 +167,11 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     {
         ak.x[i] = a0.x[i] + d3.xdot[i] * dt;
     }
-    VehState s4 = detail::Stage(s, dt, dv4, v3, w4, w3, a3, e3);
+    VehState s4 = detail::Stage(s, dt, dv4, v3, w4, k3, a3, e3);
     fn(ctx, s4, ak, &d4);
     CfLocalVector a4 = detail::LinAcc(d4);
     CfBodyOmegaAcc e4 = EpsOf(d4.inr, d4.mom, w4);
+    CfBodyOmega k4 = detail::RotSlope(k3, dt, w4);
     CfLocalVector v4 { v0.n + dv4.n, v0.e + dv4.e, v0.u + dv4.u };
     // combine
     double s6 = dt / 6.0;
@@ -162,12 +195,12 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     w1.bn = w0.bn + s6 * (e1.bn + 2.0 * e2.bn + 2.0 * e3.bn + e4.bn);
     w1.be = w0.be + s6 * (e1.be + 2.0 * e2.be + 2.0 * e3.be + e4.be);
     w1.bu = w0.bu + s6 * (e1.bu + 2.0 * e2.bu + 2.0 * e3.bu + e4.bu);
-    CfBodyOmega wm { };
-    wm.bn = (w0.bn + 2.0 * w2.bn + 2.0 * w3.bn + w4.bn) / 6.0;
-    wm.be = (w0.be + 2.0 * w2.be + 2.0 * w3.be + w4.be) / 6.0;
-    wm.bu = (w0.bu + 2.0 * w2.bu + 2.0 * w3.bu + w4.bu) / 6.0;
+    CfBodyOmega km { };
+    km.bn = (w0.bn + 2.0 * k2.bn + 2.0 * k3.bn + k4.bn) / 6.0;
+    km.be = (w0.be + 2.0 * k2.be + 2.0 * k3.be + k4.be) / 6.0;
+    km.bu = (w0.bu + 2.0 * k2.bu + 2.0 * k3.bu + k4.bu) / 6.0;
     CfRotation att = s.Att();
-    att.Propagate(wm, dt);
+    att.Propagate(km, dt);
     CfBodyOmegaAcc eEnd { };
     eEnd.bn = (e1.bn + 2.0 * e2.bn + 2.0 * e3.bn + e4.bn) / 6.0;
     eEnd.be = (e1.be + 2.0 * e2.be + 2.0 * e3.be + e4.be) / 6.0;
