@@ -6,6 +6,8 @@ if not exist build\tests mkdir build\tests
 if not exist build\slosh_out mkdir build\slosh_out
 set CLT=cl /nologo /std:c++17 /O2 /W3 /EHs-c- /GR- /utf-8 /Iinclude /Fobuild\tests\
 %CLT% tests\test_integrate.cpp /Febuild\tests\test_integrate.exe
+%CLT% tests\test_launch.cpp /Febuild\tests\test_launch.exe
+build\tests\test_launch.exe
 build\tests\test_integrate.exe
 %CLT% tests\test_ini.cpp build\gnc.lib /Febuild\tests\test_ini.exe
 build\tests\test_ini.exe

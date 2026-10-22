@@ -21,7 +21,8 @@
 //        0.5 (w + w') - a second-order scheme with an exactly unit
 //        quaternion. Subdivide the step externally for higher accuracy;
 //      - the local frame is taken quasi-inertial for the rotational
-//        dynamics (Earth-rate terms ~1e-4 rad/s are neglected); the
+//        dynamics (Earth-rate terms ~1e-4 rad/s are neglected; 1.11.0:
+//        IntegrateRK4 takes them into account, DynDeriv::earthRate); the
 //        translational Coriolis/centrifugal terms are NOT added - put
 //        them into F if the model requires them;
 //      - the returned state carries the accelerations of ITS time:
@@ -113,6 +114,28 @@ inline CfBodyOmegaAcc EpsOf(const INR& j, const CfBodyMoment& mom, const CfBodyO
     eps.bn = (k11 * rn + k12 * re + k13 * ru) * inv;
     eps.be = (k12 * rn + k22 * re + k23 * ru) * inv;
     eps.bu = (k13 * rn + k23 * re + k33 * ru) * inv;
+    return eps;
+}
+
+//  1.11.0: angular acceleration RELATIVE to the rotating Earth (the local
+//  frame of a GEO site is Earth-fixed). w -- body rate relative to the local
+//  frame, wE -- Earth rate in the BODY axes. Euler's equations hold for the
+//  absolute rate wa = w + wE; wE is constant in the local frame, so in the
+//  body axes it turns at -w: d(wE)/dt = -w x wE. Hence
+//      eps = J^-1 ( M - wa x (J wa) ) + w x wE.
+//  wE = 0 gives EpsOf(j, mom, w) exactly. Cross products in the right-handed
+//  order (bu, be, bn).
+inline CfBodyOmegaAcc EpsOfRel(const INR& j, const CfBodyMoment& mom, const CfBodyOmega& w,
+                               const CfBodyOmega& wE)
+{
+    CfBodyOmega wa { };
+    wa.bn = w.bn + wE.bn;
+    wa.be = w.be + wE.be;
+    wa.bu = w.bu + wE.bu;
+    CfBodyOmegaAcc eps = EpsOf(j, mom, wa);
+    eps.bu = eps.bu + (w.be * wE.bn - w.bn * wE.be);
+    eps.be = eps.be + (w.bn * wE.bu - w.bu * wE.bn);
+    eps.bn = eps.bn + (w.bu * wE.be - w.be * wE.bu);
     return eps;
 }
 

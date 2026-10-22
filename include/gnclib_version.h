@@ -3,6 +3,6 @@
 #ifndef GNCLIB_VERSION_H
 #define GNCLIB_VERSION_H
 
-#define GNCLIB_VERSION "1.10.0"
+#define GNCLIB_VERSION "1.11.0"
 
 #endif /* GNCLIB_VERSION_H */

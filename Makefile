@@ -24,10 +24,13 @@ clean:
 # 1.7.1: attitude order of IntegrateRK4 (test_integrate, check f);
 # 1.8.0: atmosphere GOST 4401-81 to 250 km against the standard's table (test_atmosphere);
 # 1.9.0: its Smooth mode (test_atmosphere, f, g);
-# 1.10.0: upper atmosphere GOST R 25645.166-2004 against the standard's tables (test_atm_upper)
+# 1.10.0: upper atmosphere GOST R 25645.166-2004 against the standard's tables (test_atm_upper);
+# 1.11.0: Earth rate in the rotational dynamics (test_integrate, g), launch frames (test_launch)
 test: build/libgnc.a
 	$(CXX) $(CXXFLAGS) tests/test_integrate.cpp -o build/test_integrate
 	./build/test_integrate
+	$(CXX) $(CXXFLAGS) tests/test_launch.cpp -o build/test_launch
+	./build/test_launch
 	$(CXX) $(CXXFLAGS) tests/test_ini.cpp build/libgnc.a -o build/test_ini
 	./build/test_ini
 	$(CXX) $(CXXFLAGS) tests/test_point.cpp -o build/test_point

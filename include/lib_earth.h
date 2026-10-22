@@ -5,6 +5,7 @@
 // terms below is integrating in ECEF.
 //   EarthGravityLoc -- gravitation (J2) + centrifugal at a local point;
 //   EarthRateLoc    -- Earth angular rate in the local axes;
+//   EarthRateOmg    -- the same as an angular rate (1.11.0, IntegrateRK4);
 //   CoriolisAccLoc  -- Coriolis acceleration -2 Omega x v;
 //   SpecificForceLoc -- what accelerometers sense for the relative
 //                       acceleration a_rel: a_rel + 2 Omega x v - g(r).
@@ -31,6 +32,18 @@ inline CfLocalVector EarthRateLoc(const GEO& f)
     w.e = 0.0;
     w.n = OMEGA_E * cos(lat);
     w.u = OMEGA_E * sin(lat);
+    return w;
+}
+
+// 1.11.0: Earth rate in the local axes as an angular rate (for
+// DynDeriv::earthRate of IntegrateRK4); the same components as EarthRateLoc.
+inline CfLocalOmega EarthRateOmg(const GEO& f)
+{
+    CfLocalVector v = EarthRateLoc(f);
+    CfLocalOmega w { };
+    w.n = v.n;
+    w.e = v.e;
+    w.u = v.u;
     return w;
 }
 

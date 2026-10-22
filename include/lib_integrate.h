@@ -20,6 +20,12 @@
 // slopes were the bare rates w_i: 2nd order in the attitude for a rate
 // that changes its direction (bitwise the same for a rotation about one
 // axis). Stored accelerations are the RK4 means over the step.
+// 1.11.0: the rotating Earth in the rotational dynamics -- with
+// DynDeriv::earthRate set (EarthRateOmg) the body rate stays relative to the
+// local (Earth-fixed) frame and its derivative is EpsOfRel: the gyroscopic
+// term of the absolute rate and the turn of the Earth rate in the body axes;
+// a torque-free body keeps its attitude in the inertial space. earthRate = 0
+// -- the numbers of 1.10.0 bitwise.
 // The existing Integrate (lib_dynamics.h, forces constant over the step)
 // stays as the light option. C++17, no STL, no heap.
 //============================================================================
@@ -46,6 +52,9 @@ struct DynDeriv
     CfBodyMoment mom;             // moment about the CoM, BODY axes, N*m
     INR inr;                      // mass properties at the stage
     double xdot[AuxState::NMAX];  // derivatives of the auxiliary states
+    CfLocalOmega earthRate;       // 1.11.0: Earth rate in the LOCAL axes, rad/s
+                                  // (EarthRateOmg); 0 -- non-rotating frame,
+                                  // the numbers of 1.10.0 bitwise
 };
 
 typedef void (*DynFn)(void* ctx, const VehState& s, const AuxState& aux, DynDeriv* d);
@@ -74,6 +83,20 @@ inline CfBodyOmega RotSlope(const CfBodyOmega& kPrev, double tau, const CfBodyOm
     k.be = w.be + 0.5 * ae + be / 12.0;
     k.bu = w.bu + 0.5 * au + bu / 12.0;
     return k;
+}
+
+// 1.11.0: angular acceleration of a stage relative to the local frame;
+// with the Earth rate set -- the gyroscopic terms of the absolute rate and
+// the turn of the Earth rate in the body axes (EpsOfRel), the Earth rate is
+// taken into the body axes by the stage attitude.
+//   d -- stage derivatives; s -- stage state (attitude); w -- stage body rate
+inline CfBodyOmegaAcc EpsStage(const DynDeriv& d, const VehState& s, const CfBodyOmega& w)
+{
+    if (d.earthRate.n == 0.0 && d.earthRate.e == 0.0 && d.earthRate.u == 0.0)
+    {
+        return EpsOf(d.inr, d.mom, w);
+    }
+    return EpsOfRel(d.inr, d.mom, w, s.Att().L2B(d.earthRate));
 }
 
 inline CfLocalVector LinAcc(const DynDeriv& d)
@@ -132,7 +155,7 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     // stage 1
     fn(ctx, s, a0, &d1);
     CfLocalVector a1 = detail::LinAcc(d1);
-    CfBodyOmegaAcc e1 = EpsOf(d1.inr, d1.mom, w0);
+    CfBodyOmegaAcc e1 = detail::EpsStage(d1, s, w0);
     // stage 2 (dt / 2)
     double h = 0.5 * dt;
     CfLocalVector dv2 { a1.n * h, a1.e * h, a1.u * h };
@@ -145,7 +168,7 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     VehState s2 = detail::Stage(s, h, dv2, v0, w2, w0, a1, e1);
     fn(ctx, s2, ak, &d2);
     CfLocalVector a2 = detail::LinAcc(d2);
-    CfBodyOmegaAcc e2 = EpsOf(d2.inr, d2.mom, w2);
+    CfBodyOmegaAcc e2 = detail::EpsStage(d2, s2, w2);
     CfBodyOmega k2 = detail::RotSlope(w0, h, w2);
     // stage 3 (dt / 2)
     CfLocalVector dv3 { a2.n * h, a2.e * h, a2.u * h };
@@ -157,7 +180,7 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     VehState s3 = detail::Stage(s, h, dv3, v2, w3, k2, a2, e2);
     fn(ctx, s3, ak, &d3);
     CfLocalVector a3 = detail::LinAcc(d3);
-    CfBodyOmegaAcc e3 = EpsOf(d3.inr, d3.mom, w3);
+    CfBodyOmegaAcc e3 = detail::EpsStage(d3, s3, w3);
     CfBodyOmega k3 = detail::RotSlope(k2, h, w3);
     // stage 4 (dt)
     CfLocalVector dv4 { a3.n * dt, a3.e * dt, a3.u * dt };
@@ -170,7 +193,7 @@ inline VehState IntegrateRK4(const VehState& s, AuxState* aux, double dt, DynFn 
     VehState s4 = detail::Stage(s, dt, dv4, v3, w4, k3, a3, e3);
     fn(ctx, s4, ak, &d4);
     CfLocalVector a4 = detail::LinAcc(d4);
-    CfBodyOmegaAcc e4 = EpsOf(d4.inr, d4.mom, w4);
+    CfBodyOmegaAcc e4 = detail::EpsStage(d4, s4, w4);
     CfBodyOmega k4 = detail::RotSlope(k3, dt, w4);
     CfLocalVector v4 { v0.n + dv4.n, v0.e + dv4.e, v0.u + dv4.u };
     // combine

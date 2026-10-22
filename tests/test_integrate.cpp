@@ -1,5 +1,6 @@
 // test_integrate.cpp -- gnclib 1.1.0: IntegrateRK4 (stage forces, aux
-// states) and the rotating Earth (lib_earth.h); 1.7.1: attitude order (f).
+// states) and the rotating Earth (lib_earth.h); 1.7.1: attitude order (f);
+// 1.11.0: Earth rate in the rotational dynamics (g).
 // Build: g++ -std=c++17 -O2 -Iinclude tests/test_integrate.cpp -o build/test_integrate
 #include "lib.h"
 #include "lib_integrate.h"
@@ -122,6 +123,47 @@ static VehState RunFree(CtxConst* k, const CfBodyOmega& w0, double dt, double T)
         s = IntegrateRK4(s, 0, dt, FnFree, k);
     }
     return s;
+}
+
+// (g) 1.11.0: torque-free body on the rotating Earth (DynDeriv::earthRate)
+struct CtxRot { INR inr; CfLocalOmega wE; };
+static void FnRot(void* c, const VehState&, const AuxState&, DynDeriv* d)
+{
+    CtxRot* k = (CtxRot*)c;
+    d->inr = k->inr;
+    d->earthRate = k->wE;
+}
+
+// (g) local vector v turned about the unit axis k by ang (Rodrigues).
+static CfLocalVector Turn(const CfLocalVector& v, const CfLocalVector& k, double ang)
+{
+    double c = cos(ang);
+    double s = sin(ang);
+    double kv = k.e * v.e + k.n * v.n + k.u * v.u;
+    CfLocalVector x { };
+    x.e = k.n * v.u - k.u * v.n;
+    x.n = k.u * v.e - k.e * v.u;
+    x.u = k.e * v.n - k.n * v.e;
+    CfLocalVector r { };
+    r.e = v.e * c + x.e * s + k.e * kv * (1.0 - c);
+    r.n = v.n * c + x.n * s + k.n * kv * (1.0 - c);
+    r.u = v.u * c + x.u * s + k.u * kv * (1.0 - c);
+    return r;
+}
+
+// (g) nose (bu) of a torque-free body after T s; the body rate is relative
+// to the Earth, w0 -- its initial value.
+static CfLocalVector NoseAfter(CtxRot* k, const CfBodyOmega& w0, double dt, double T)
+{
+    VehState s = Init(0.0, 0.0, w0);
+    int n = (int)(T / dt + 0.5);
+    for (int i = 0; i < n; ++i)
+    {
+        s = IntegrateRK4(s, 0, dt, FnRot, k);
+    }
+    CfBodyVector bu { };
+    bu.bu = 1.0;
+    return s.Att().B2L(bu);
 }
 
 int main()
@@ -250,6 +292,57 @@ int main()
         CfLocalVector h3 = HLocal(s3, k.inr);
         Check("(f) dt 2 ms, 20 s: rel. drift of H, local axes",
               Norm(Sub(h3, h0)) / Norm(h0), 1.0e-11);
+    }
+    // (g) 1.11.0: torque-free bodies on the rotating Earth (Plesetsk). The
+    // body rate is relative to the Earth; a body with zero ABSOLUTE rate
+    // (relative rate -om) keeps its direction in the inertial space, so in
+    // the local axes its nose turns at -om about the Earth axis; a fast
+    // spinner keeps its axis in the inertial space (gyroscopic terms of the
+    // absolute rate); a body at rest relative to the Earth co-rotates
+    {
+        GEO geo;
+        CfGeodetic site { };
+        site.lat = 62.928008 * PI / 180.0;
+        site.lon = 40.456137 * PI / 180.0;
+        geo.SetOrigin(site);
+        CtxRot k { };
+        k.inr = Inr(1.0, 2.0, 5.0, 5.0);
+        k.wE = EarthRateOmg(geo);
+        CtxRot k0 = k;
+        CfLocalOmega z { };
+        k0.wE = z;
+        CfLocalVector ax = EarthRateLoc(geo);
+        double om = Norm(ax);
+        ax.e = ax.e / om;
+        ax.n = ax.n / om;
+        ax.u = ax.u / om;
+        CfLocalVector up { };
+        up.u = 1.0;
+        // zero absolute rate (identity attitude: bu = u, be = e, bn = n), 158 s
+        CfBodyOmega wi { };
+        wi.bu = -k.wE.u;
+        wi.be = -k.wE.e;
+        wi.bn = -k.wE.n;
+        CfLocalVector want = Turn(up, ax, -om * 158.0);
+        Check("(g) zero absolute rate, 158 s: nose vs inertial, rad",
+              Norm(Sub(NoseAfter(&k, wi, 0.01, 158.0), want)), 1.0e-9);
+        // spin 10 rad/s (absolute) about the symmetry axis bu, 60 s
+        CfBodyOmega ws = wi;
+        ws.bu = 10.0 - k.wE.u;
+        CfLocalVector want60 = Turn(up, ax, -om * 60.0);
+        double eNew = Norm(Sub(NoseAfter(&k, ws, 0.001, 60.0), want60));
+        double eOld = Norm(Sub(NoseAfter(&k0, ws, 0.001, 60.0), want60));
+        printf("    spinner, 60 s: nose off inertial %.3e rad (earthRate 0: %.3e rad)\n",
+               eNew, eOld);
+        Check("(g) spinning 10 rad/s, 60 s: nose vs inertial, rad", eNew, 1.0e-8);
+        // at rest relative to the Earth, spherical body: co-rotates, stays put
+        // in the local axes (an unsymmetric one nutates: rotation with the
+        // Earth about a non-principal axis is not steady)
+        CtxRot ks = k;
+        ks.inr = Inr(1.0, 5.0, 5.0, 5.0);
+        CfBodyOmega w0 { };
+        Check("(g) spherical body at rest on the Earth, 158 s: nose vs up, rad",
+              Norm(Sub(NoseAfter(&ks, w0, 0.01, 158.0), up)), 1.0e-12);
     }
     printf(g_bad == 0 ? "TEST_INTEGRATE PASS\n" : "TEST_INTEGRATE FAIL\n");
     return g_bad;
