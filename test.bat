@@ -11,6 +11,10 @@ build\tests\test_integrate.exe
 build\tests\test_ini.exe
 %CLT% tests\test_point.cpp /Febuild\tests\test_point.exe
 build\tests\test_point.exe
+%CLT% tests\test_atmosphere.cpp /Febuild\tests\test_atmosphere.exe
+build\tests\test_atmosphere.exe
+%CLT% tests\test_atm_upper.cpp /Febuild\tests\test_atm_upper.exe
+build\tests\test_atm_upper.exe
 %CLT% tests\test_common.cpp build\gnc.lib /Febuild\tests\test_common.exe
 build\tests\test_common.exe
 %CLT% tests\test_slosh.cpp build\gnc.lib /Febuild\tests\test_slosh.exe

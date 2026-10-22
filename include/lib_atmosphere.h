@@ -1,29 +1,82 @@
 //======================================================================
 //  lib_atmosphere.h
-//  EnvAtmosphere - standard atmosphere from sea level to 150 km, with a
-//  temperature offset from the standard (hot/cold day: temperature shifted,
-//  pressure profile kept, density recomputed from the state equation).
+//  EnvAtmosphere - standard atmosphere GOST 4401-81 from -2 km to 250 km,
+//  with a temperature offset from the standard (hot/cold day: temperature
+//  shifted, pressure profile kept, density recomputed from the state
+//  equation).
 //
-//  PROFILE (1.0.4)
-//    0 ... 94 km GEOPOTENTIAL -- GOST 4401-81, its layers exactly: the same as
-//      US-76 up to 71 km; the -2 K/km layer ends at 85 km (US-76: 84.852 km),
-//      then 186.65 K isothermal up to 94 km.
-//    94 km geopotential (95.411 km geometric) ... 150 km geometric --
-//      TEMPORARILY US-76 (owner: to be replaced by the GOST 4401-81 table):
-//      its tabulated temperature, pressure and density every 1 km, pressure
-//      and density scaled so they join GOST continuously at 94 km (x0.990 and
-//      x1.010), the temperature blended from 186.65 K into US-76 with a 5 km
-//      decay. Pressure and density are log-linear between the rows.
-//    above 150 km -- no air: pressure and density 0.
+//  PROFILE (1.8.0) -- GOST 4401-81 throughout, its formulas and constants:
+//    -2 ... 120 km -- molar temperature T_M linear in the GEOPOTENTIAL
+//      height H (layers below), pressure by the hydrostatic equation with
+//      T_M: p = p_b (T_M / T_Mb)^(-g0 / (R beta)), or the exponent in an
+//      isothermal layer. Above 94 km (geometric) the molar mass M falls
+//      (MolarMass below); kinetic temperature T = T_M M / M_C, density
+//      rho = p / (R T_M) = p M / (R* T).
+//    120 ... 250 km -- kinetic temperature linear in the GEOMETRIC height
+//      (GOST table 6), molar mass a cubic in h (table 3), particle
+//      concentration a 4th-degree polynomial in h (table 7, eq. 9);
+//      p = n k T, rho = n M / N_A (the same as p M / (R* T)).
+//    above 250 km -- no air: pressure and density 0, temperature held.
+//
+//  THE STANDARD'S OWN STEPS. GOST passes from the barometric formula to
+//  the concentration polynomial at 120 km, and from one polynomial to the
+//  next at 150 and 200 km, without joining them: pressure and density step
+//  down by 0.75 % at 120 km (temperature up by 0.003 K), by 0.08 % at
+//  150 km and by 0.75 % at 200 km. GOST table 4 gives each knot the value
+//  of the interval below it. Mode Gost (the default) reproduces the
+//  standard and keeps the steps; a knot belongs to the interval above it.
+//
+//  SMOOTH MODE (1.9.0, AtmMode::Smooth, ATM_STD_SMOOTH) -- for integrators.
+//  Within +-W_SMOOTH = 2 km of each knot both pieces are evaluated (each
+//  a little past its interval) and blended with the quintic weight
+//  s = x^3 (10 - 15 x + 6 x^2): temperature and molar mass linearly,
+//  pressure in its logarithm, density from the state equation. The
+//  profile is then C2 in height across the knots (the standard's own
+//  temperature kinks -- layer bases, 140/160/200 km -- stay, as in any
+//  standard atmosphere). Outside the windows the numbers are Gost to the
+//  bit; inside, pressure and density move from one piece to the other
+//  and differ from Gost by up to 0.53 % (from GOST table 4 rows, up to
+//  0.42 %, at 119 km) -- less than the 0.75 % the standard itself steps.
+//  MEASURED (tests/test_atmosphere.cpp): RK4, a fall with drag from 210
+//  to 110 km, height error at dt 0.9 / 0.45 / 0.225 s -- Gost 1.0e-2 /
+//  7.3e-3 / 3.2e-3 m (order 1, set by the steps), Smooth 6.1e-3 /
+//  1.3e-4 / 3.9e-7 m.
+//
+//  94 ... 97 km MOLAR MASS. The square-root formula of GOST section 4 is
+//  not legible in the copies available to the owner; the one used
+//  (MolarMassOf) meets the 3-decimal M of table 4 within 0.0009 and its
+//  97 km end within 7.4e-5 kg/kmol. Below 120 km pressure and density do
+//  not depend on M (they go by T_M); kinetic temperature does, within
+//  0.005 K of the table.
+//
+//  TABLE 7, two constant terms. The text of the standard available to
+//  the owner prints c0 = 0.10163937e4 (150-200 km) and 0.7631575e3
+//  (200-250 km); with them the polynomial misses the standard's own
+//  table 4 by up to 1.3e-4 and 1.3e-5. The constants used here,
+//  1016.393796 and 763.1575226, are fitted to table 4 (every row given,
+//  151-199 and 201-250 km); the misses fall to 3.5e-6 and 1.3e-6 --
+//  the rounding of the 6-digit table. The other coefficients are
+//  exactly as printed (120-150 km meets table 4 within 3e-6 as printed).
 //
 //  HEIGHT. Every function takes the GEOMETRIC height, m -- the height above
-//  the WGS84 ellipsoid. The layers up to 94 km are geopotential and are read
-//  through H = R0 h / (R0 + h), R0 = R_GEOPOT = 6 356 766 m; the table above
-//  is geometric already.
+//  the WGS84 ellipsoid. The layers up to 120 km are geopotential and are
+//  read through H = r h / (r + h), r = R_GEOPOT = 6 356 767 m (GOST).
+//  Below -2 km geopotential the height is held at -2 km.
 //
-//  1.0.2 put the geometric height into the geopotential layers without
-//  conversion (pressure 5 % low at 51.6 km); 1.0.3 converted it and ended at
-//  86 km.
+//  SOUND SPEED AND VISCOSITY. GOST tabulates them to 80 km; the same
+//  formulas are used above, the sound speed with the molar mass:
+//  a = sqrt(kappa R* T / M).
+//
+//  CHECK (tests/test_atmosphere.cpp): against GOST 4401-81 table 4, sea
+//  level and 80 ... 250 km, 75 rows -- temperature within 0.0052 K,
+//  pressure and density within 9.3e-5 (above 120 km within 4e-6), molar
+//  mass within its printed digits; sound speed within 0.001 m/s.
+//
+//  History: 1.0.2 put the geometric height into the geopotential layers
+//  without conversion; 1.0.3 converted it and ended at 86 km; 1.0.4 took
+//  GOST to 94 km and US-76 (scaled) to 150 km; 1.8.0 -- GOST to 250 km,
+//  GOST constants (R = 287.05287, r = 6 356 767 m), -2 km lower bound;
+//  1.9.0 -- AtmMode::Smooth (Gost mode the same numbers to the bit).
 //
 //  The class is constexpr-constructible: a standard-day instance can be
 //  a constant-initialized static (ATM_STD below). C++17, no STL, no heap.
@@ -39,17 +92,33 @@
 namespace gnc
 {
 
-inline constexpr double G0_STD = 9.80665;       // standard gravity, m/s^2
-inline constexpr double R_AIR = 287.0528;       // gas constant of air, J/(kg K)
-inline constexpr double R_GEOPOT = 6356766.0;   // geopotential radius, m
+inline constexpr double G0_STD = 9.80665;           // standard gravity, m/s^2
+inline constexpr double R_STAR = 8314.32;           // universal gas constant, J/(kmol K), GOST
+inline constexpr double M_AIR0 = 28.964420;         // molar mass of air below 94 km, kg/kmol, GOST
+inline constexpr double N_AVOGADRO = 602.257e24;    // Avogadro number, 1/kmol, GOST
+inline constexpr double R_AIR = 287.05287;          // gas constant of air, J/(kg K), GOST
+inline constexpr double R_GEOPOT = 6356767.0;       // conventional Earth radius, m, GOST
+inline constexpr double K_BOLTZ = R_STAR / N_AVOGADRO;  // Boltzmann constant, J/K
 
-//  The air at one height (1.4.0): what Temperature, Pressure and Density
-//  return there (EnvAtmosphere::State).
+//  The air at one height (1.4.0): what Temperature, Pressure, Density and
+//  MolarMass return there (EnvAtmosphere::State).
 struct AtmState
 {
     double t;     // temperature, K (with the offset)
     double p;     // static pressure, Pa
     double rho;   // density, kg/m^3
+    double m;     // molar mass, kg/kmol (1.8.0)
+};
+
+//  1.9.0: how the pieces of GOST 4401-81 meet at 120, 150 and 200 km.
+//    Gost   -- as the standard: pressure and density step there (0.75 %,
+//              0.08 %, 0.75 %);
+//    Smooth -- the two pieces blended across +-W_SMOOTH around each knot,
+//              C2 in height (see the header); exactly Gost outside.
+enum class AtmMode : int
+{
+    Gost = 0,
+    Smooth = 1
 };
 
 class EnvAtmosphere
@@ -57,47 +126,25 @@ class EnvAtmosphere
 public:
 
     static constexpr double P_SL = 101325.0;    // sea-level pressure, Pa
+    static constexpr double Z_MAX = 250000.0;   // top of the model, geometric, m
+    static constexpr double W_SMOOTH = 2000.0;  // Smooth: half-width of the blend at a knot, m
 
-    //  dTemp - temperature offset from ISA, K (0 - standard day).
-    constexpr explicit EnvAtmosphere(double dTemp = 0.0)
-        : m_lay()
-        , m_dt(dTemp)
+    //  dTemp - temperature offset from the standard, K (0 - standard day);
+    //  mode  - Gost (the standard as printed) or Smooth (for integrators).
+    constexpr explicit EnvAtmosphere(double dTemp = 0.0, AtmMode mode = AtmMode::Gost)
+        : m_dt(dTemp)
+        , m_mode(mode)
     {
-        //  GOST 4401-81 layers (the same as US-76 below 71 km): base height,
-        //  base temperature, lapse rate, base pressure. Fields BY NAME.
-        m_lay[0].hb = 0.0;
-        m_lay[0].tb = 288.15;
-        m_lay[0].lb = -0.0065;
-        m_lay[0].pb = 101325.0;
-        m_lay[1].hb = 11000.0;
-        m_lay[1].tb = 216.65;
-        m_lay[1].lb = 0.0;
-        m_lay[1].pb = 22632.06;
-        m_lay[2].hb = 20000.0;
-        m_lay[2].tb = 216.65;
-        m_lay[2].lb = 0.001;
-        m_lay[2].pb = 5474.889;
-        m_lay[3].hb = 32000.0;
-        m_lay[3].tb = 228.65;
-        m_lay[3].lb = 0.0028;
-        m_lay[3].pb = 868.0187;
-        m_lay[4].hb = 47000.0;
-        m_lay[4].tb = 270.65;
-        m_lay[4].lb = 0.0;
-        m_lay[4].pb = 110.9063;
-        m_lay[5].hb = 51000.0;
-        m_lay[5].tb = 270.65;
-        m_lay[5].lb = -0.0028;
-        m_lay[5].pb = 66.93887;
-        m_lay[6].hb = 71000.0;
-        m_lay[6].tb = 214.65;
-        m_lay[6].lb = -0.002;
-        m_lay[6].pb = 3.956420;
-        //  GOST 4401-81: the -2 K/km layer ends at 85 km, then isothermal.
-        m_lay[7].hb = 85000.0;
-        m_lay[7].tb = 186.65;
-        m_lay[7].lb = 0.0;
-        m_lay[7].pb = 0.363411935;
+    }
+
+    constexpr void SetMode(AtmMode mode)
+    {
+        m_mode = mode;
+    }
+
+    constexpr AtmMode Mode() const
+    {
+        return m_mode;
     }
 
     constexpr void SetDeltaTemp(double dTemp)
@@ -110,140 +157,57 @@ public:
         return m_dt;
     }
 
-    //  Air temperature, K; clamped below 0 m; above 150 km held at its value there.
-    //  Includes the ISA offset.
+    //  Air temperature, K, with the offset; not below 1e-3 K.
+    //    h -- geometric height, m
     double Temperature(double h) const
     {
-        double t = TemperatureIsa(h) + m_dt;
-        if (t < 1.0e-3)
-        {
-            t = 1.0e-3;
-        }
-        return t;
+        Point q { };
+        Eval(h, false, &q);
+        return OffsetT(q.tIsa);
     }
 
-    //  Static pressure, Pa: hydrostatic integration inside a layer,
-    //  power law with lapse, exponent in isothermal layers; above the
-    //  GOST layers the table; 0 above 150 km. Does NOT depend on dTemp (non-standard-day convention:
-    //  pressure profile kept, temperature shifted).
-    //    h -- geometric height, m; converted to geopotential inside
+    //  Static pressure, Pa; 0 above Z_MAX. Does NOT depend on dTemp
+    //  (non-standard-day convention: pressure profile kept, temperature
+    //  shifted).
+    //    h -- geometric height, m
     double Pressure(double h) const
     {
-        if (h <= 0.0)
-        {
-            h = 0.0;
-        }
-        if (h >= Z_MAX)
-        {
-            return 0.0;
-        }
-        if (h >= Z_TOP)
-        {
-            double f = 0.0;
-            int k = UpIndex(h, &f);
-            return K_P * UpLog(UpP(k), UpP(k + 1), f);
-        }
-        h = GeomToGeopot(h);
-        int i = LayerIndex(h);
-        double hb = m_lay[i].hb;
-        double tb = m_lay[i].tb;
-        double lb = m_lay[i].lb;
-        double pb = m_lay[i].pb;
-        double dh = h - hb;
-        if (fabs(lb) > 1.0e-12)
-        {
-            double t = tb + lb * dh;
-            if (t < 1.0e-3)
-            {
-                t = 1.0e-3;
-            }
-            return pb * pow(t / tb, -G0_STD / (R_AIR * lb));
-        }
-        return pb * exp(-G0_STD * dh / (R_AIR * tb));
+        Point q { };
+        Eval(h, true, &q);
+        return q.p;
     }
 
-    //  Density, kg/m^3, from the state equation rho = P / (R T);
-    //  0 above 150 km. Depends on dTemp through the temperature.
+    //  Density, kg/m^3, from the state equation rho = p M / (R* T) with
+    //  the shifted temperature; 0 above Z_MAX.
+    //    h -- geometric height, m
     double Density(double h) const
     {
-        if (h <= 0.0)
-        {
-            h = 0.0;
-        }
-        if (h >= Z_MAX)
-        {
-            return 0.0;
-        }
-        if (h >= Z_TOP)
-        {
-            //  The table density (the molar mass falls up there), scaled to
-            //  GOST at the joint, and moved with the temperature offset as
-            //  the state equation moves it.
-            double f = 0.0;
-            int k = UpIndex(h, &f);
-            return K_R * UpLog(UpRho(k), UpRho(k + 1), f) * TemperatureIsa(h) / Temperature(h);
-        }
-        double t = Temperature(h);
-        double p = Pressure(h);
-        return p / (R_AIR * t);
+        Point q { };
+        Eval(h, true, &q);
+        return Rho(q.p, q.m, OffsetT(q.tIsa));
     }
 
-    //  1.4.0: temperature, pressure and density at once, with one height
-    //  conversion and one layer search -- the same numbers as Temperature,
-    //  Pressure and Density, to the bit (the three calls convert the height
-    //  and search the layers four times).
+    //  Molar mass of air, kg/kmol: M_AIR0 up to 94 km, falling above (GOST).
+    //    h -- geometric height, m
+    double MolarMass(double h) const
+    {
+        Point q { };
+        Eval(h, false, &q);
+        return q.m;
+    }
+
+    //  1.4.0: temperature, pressure, density (and 1.8.0: molar mass) at
+    //  once -- the same numbers as the separate calls, to the bit.
     //    h -- geometric height, m
     AtmState State(double h) const
     {
+        Point q { };
+        Eval(h, true, &q);
         AtmState r { };
-        if (h <= 0.0)
-        {
-            h = 0.0;
-        }
-        if (h >= Z_TOP)
-        {
-            double z = h < Z_MAX ? h : Z_MAX;
-            double f = 0.0;
-            int k = UpIndex(z, &f);
-            double tu = UpT(k) + f * (UpT(k + 1) - UpT(k));
-            double tIsa = tu + (T_TOP - UpT(0)) * exp(-(z - Z_TOP) / 5000.0);
-            r.t = tIsa + m_dt;
-            if (r.t < 1.0e-3)
-            {
-                r.t = 1.0e-3;
-            }
-            if (h >= Z_MAX)
-            {
-                return r;
-            }
-            r.p = K_P * UpLog(UpP(k), UpP(k + 1), f);
-            r.rho = K_R * UpLog(UpRho(k), UpRho(k + 1), f) * tIsa / r.t;
-            return r;
-        }
-        double hg = GeomToGeopot(h);
-        int i = LayerIndex(hg);
-        double tb = m_lay[i].tb;
-        double lb = m_lay[i].lb;
-        double dh = hg - m_lay[i].hb;
-        double tl = tb + lb * dh;
-        if (tl < 1.0e-3)
-        {
-            tl = 1.0e-3;
-        }
-        r.t = tl + m_dt;
-        if (r.t < 1.0e-3)
-        {
-            r.t = 1.0e-3;
-        }
-        if (fabs(lb) > 1.0e-12)
-        {
-            r.p = m_lay[i].pb * pow(tl / tb, -G0_STD / (R_AIR * lb));
-        }
-        else
-        {
-            r.p = m_lay[i].pb * exp(-G0_STD * dh / (R_AIR * tb));
-        }
-        r.rho = r.p / (R_AIR * r.t);
+        r.t = OffsetT(q.tIsa);
+        r.p = q.p;
+        r.rho = Rho(q.p, q.m, r.t);
+        r.m = q.m;
         return r;
     }
 
@@ -262,10 +226,13 @@ public:
         return pr;
     }
 
-    //  Speed of sound, m/s: a = sqrt(gamma R T), gamma = 1.4.
+    //  Speed of sound, m/s: a = sqrt(kappa R* T / M), kappa = 1.4
+    //  (= sqrt(1.4 R_AIR T) below 94 km, to the bit).
     double SoundSpeed(double h) const
     {
-        return sqrt(1.4 * R_AIR * Temperature(h));
+        Point q { };
+        Eval(h, false, &q);
+        return sqrt(1.4 * R_AIR * OffsetT(q.tIsa) * (M_AIR0 / q.m));
     }
 
     //  Mach number; 0 on degenerate speed of sound.
@@ -285,7 +252,7 @@ public:
         return 0.5 * Density(h) * v * v;
     }
 
-    //  Dynamic viscosity (Sutherland), Pa*s.
+    //  Dynamic viscosity (Sutherland, GOST: beta_s = 1.458e-6, S = 110.4 K), Pa*s.
     double DynamicViscosity(double h) const
     {
         double t = Temperature(h);
@@ -315,19 +282,30 @@ public:
     }
 
     //  Geometric -> geopotential height.
-    static double GeomToGeopot(double h)
+    static constexpr double GeomToGeopot(double h)
     {
         return R_GEOPOT * h / (R_GEOPOT + h);
     }
 
     //  Geopotential -> geometric height.
-    static double GeopotToGeom(double hp)
+    static constexpr double GeopotToGeom(double hp)
     {
         return R_GEOPOT * hp / (R_GEOPOT - hp);
     }
 
 private:
 
+    //  One height, standard day: kinetic temperature, pressure, molar mass.
+    struct Point
+    {
+        double tIsa;
+        double p;
+        double m;
+    };
+
+    //  Molar-temperature layer: base geopotential height, base molar
+    //  temperature, gradient dT_M/dH, base pressure (computed from the
+    //  layers below with the GOST constants).
     struct Layer
     {
         double hb;
@@ -336,124 +314,38 @@ private:
         double pb;
     };
 
-    static constexpr int N_LAY = 8;
+    static constexpr int N_LAY = 10;
+    static constexpr double Z_MIN = -1999.3709472292348;    // GOST lower bound -2000 m geopotential, as geometric, m
+    static constexpr double Z_M = 94000.0;          // molar mass constant below, geometric, m
+    static constexpr int N_KNOT = 3;                // 120, 150, 200 km (Knot)
 
-    //  GOST 4401-81 ends its layers at 94 km geopotential; the table above
-    //  begins there, at the same geometric height.
-    static constexpr double Z_TOP = 95410.878;        // geometric height of 94 km geopotential, m
-    static constexpr double Z_MAX = 150000.0;   // no air above, m
-    static constexpr double T_TOP = 186.65;     // GOST temperature at the top of its layers, K
-    static constexpr double K_P = 0.990088207;           // US-76 pressure scaled to GOST at the joint
-    static constexpr double K_R = 1.009883930;           // US-76 density scaled to GOST at the joint
-    static constexpr int N_UP = 56;
-
-    //  US-76 above the joint, geometric height every 1 km (TEMPORARY, owner).
-    static double UpZ(int i)
+    //  GOST 4401-81 table 5 (T_M by geopotential height to 120 km geometric).
+    static const Layer& Lay(int i)
     {
-        static const double Z[N_UP] =
+        static const Layer L[N_LAY] =
         {
-            95410.878, 96000.000, 97000.000, 98000.000, 99000.000, 100000.000,
-            101000.000, 102000.000, 103000.000, 104000.000, 105000.000, 106000.000,
-            107000.000, 108000.000, 109000.000, 110000.000, 111000.000, 112000.000,
-            113000.000, 114000.000, 115000.000, 116000.000, 117000.000, 118000.000,
-            119000.000, 120000.000, 121000.000, 122000.000, 123000.000, 124000.000,
-            125000.000, 126000.000, 127000.000, 128000.000, 129000.000, 130000.000,
-            131000.000, 132000.000, 133000.000, 134000.000, 135000.000, 136000.000,
-            137000.000, 138000.000, 139000.000, 140000.000, 141000.000, 142000.000,
-            143000.000, 144000.000, 145000.000, 146000.000, 147000.000, 148000.000,
-            149000.000, 150000.000
+            { 0.0,      288.15, -0.0065, 101325.0 },
+            { 11000.0,  216.65,  0.0,    22632.040095007793 },
+            { 20000.0,  216.65,  0.0010, 5474.877424281046 },
+            { 32000.0,  228.65,  0.0028, 868.0157766202153 },
+            { 47000.0,  270.65,  0.0,    110.9057733673104 },
+            { 51000.0,  270.65, -0.0028, 66.93852812117996 },
+            { 71000.0,  214.65, -0.0020, 3.956392160396618 },
+            { 85000.0,  186.65,  0.0,    0.3634093782341348 },
+            { 94000.0,  186.65,  0.0030, 0.06998127390940209 },
+            { 102450.0, 212.00,  0.0110, 0.01641157496321042 }
         };
-        return Z[i];
-    }
-    static double UpT(int i)
-    {
-        static const double T[N_UP] =
-        {
-            188.7575, 189.3050, 190.4035, 191.7234, 193.2773, 195.0813,
-            197.1559, 199.5274, 202.2305, 205.3117, 208.8352, 212.8939,
-            217.6306, 223.2860, 230.3312, 239.9997, 252.0000, 264.0000,
-            276.0000, 288.0000, 300.0000, 312.0000, 324.0000, 336.0000,
-            348.0000, 360.0000, 371.8864, 383.5485, 394.9905, 406.2167,
-            417.2313, 428.0383, 438.6416, 449.0452, 459.2528, 469.2683,
-            479.0953, 488.7374, 498.1981, 507.4810, 516.5893, 525.5265,
-            534.2957, 542.9003, 551.3433, 559.6279, 567.7570, 575.7336,
-            583.5606, 591.2409, 598.7773, 606.1725, 613.4291, 620.5499,
-            627.5374, 634.3941
-        };
-        return T[i];
-    }
-    static double UpP(int i)
-    {
-        static const double P[N_UP] =
-        {
-            7.068236e-02, 6.376231e-02, 5.357131e-02, 4.505906e-02, 3.794895e-02, 3.200574e-02,
-            2.719660e-02, 2.314841e-02, 1.974340e-02, 1.688073e-02, 1.447451e-02, 1.245185e-02,
-            1.075117e-02, 9.320610e-03, 8.116589e-03, 7.102788e-03, 6.262352e-03, 5.555474e-03,
-            4.956891e-03, 4.446640e-03, 4.008837e-03, 3.630765e-03, 3.302183e-03, 3.014787e-03,
-            2.761814e-03, 2.537377e-03, 2.340366e-03, 2.164232e-03, 2.006248e-03, 1.864094e-03,
-            1.735789e-03, 1.619640e-03, 1.514193e-03, 1.418196e-03, 1.330567e-03, 1.250371e-03,
-            1.176795e-03, 1.109131e-03, 1.046763e-03, 9.891506e-04, 9.358211e-04, 8.863591e-04,
-            8.403991e-04, 7.976186e-04, 7.577327e-04, 7.204894e-04, 6.856648e-04, 6.530602e-04,
-            6.224989e-04, 5.938229e-04, 5.668915e-04, 5.415785e-04, 5.177710e-04, 4.953675e-04,
-            4.742768e-04, 4.541520e-04
-        };
-        return P[i];
-    }
-    static double UpRho(int i)
-    {
-        static const double D[N_UP] =
-        {
-            1.293372e-06, 1.162025e-06, 9.685670e-07, 8.071057e-07, 6.725008e-07, 5.601843e-07,
-            4.695725e-07, 3.934839e-07, 3.298591e-07, 2.767593e-07, 2.324417e-07, 1.953891e-07,
-            1.643117e-07, 1.381326e-07, 1.159663e-07, 9.706754e-08, 8.113322e-08, 6.839327e-08,
-            5.811486e-08, 4.974959e-08, 4.288343e-08, 3.720118e-08, 3.246087e-08, 2.847535e-08,
-            2.509881e-08, 2.220555e-08, 1.976862e-08, 1.767169e-08, 1.585874e-08, 1.428415e-08,
-            1.291058e-08, 1.170727e-08, 1.064885e-08, 9.714208e-09, 8.885781e-09, 8.148848e-09,
-            7.491040e-09, 6.901922e-09, 6.372656e-09, 5.895733e-09, 5.464748e-09, 5.074223e-09,
-            4.719453e-09, 4.396390e-09, 4.101536e-09, 3.831862e-09, 3.584738e-09, 3.357870e-09,
-            3.149257e-09, 2.957144e-09, 2.779991e-09, 2.616440e-09, 2.465295e-09, 2.325495e-09,
-            2.196099e-09, 2.075208e-09
-        };
-        return D[i];
+        return L[i];
     }
 
-    //  Row below a geometric height of the upper table, and the fraction.
-    static int UpIndex(double z, double* f)
-    {
-        //  1.4.0: the rows go every kilometre from UpZ(1); the row is
-        //  guessed from that and then moved by the same test as the search
-        //  from the bottom, so it is the same row (was a search over up to
-        //  56 rows at every call above 95 km).
-        int i = z >= UpZ(1) ? (int)((z - UpZ(1)) / 1000.0) + 1 : 0;
-        i = i < 0 ? 0 : (i > N_UP - 2 ? N_UP - 2 : i);
-        while (i > 0 && z < UpZ(i))
-        {
-            i = i - 1;
-        }
-        while (i < N_UP - 2 && z >= UpZ(i + 1))
-        {
-            i = i + 1;
-        }
-        double span = UpZ(i + 1) - UpZ(i);
-        *f = span > 1.0e-9 ? (z - UpZ(i)) / span : 0.0;
-        *f = *f < 0.0 ? 0.0 : (*f > 1.0 ? 1.0 : *f);
-        return i;
-    }
-
-    //  Upper table, log-linear.
-    static double UpLog(double a, double b, double f)
-    {
-        return a > 0.0 && b > 0.0 ? a * exp(f * log(b / a)) : a + f * (b - a);
-    }
-
-    //  Layer whose base is at or below h (the last layer above all bases).
-    int LayerIndex(double h) const
+    //  Layer whose base is at or below H (layer 0 below its base).
+    static int LayerIndex(double hp)
     {
         int i = N_LAY - 1;
         int k = 0;
         for (k = 0; k < N_LAY - 1; k = k + 1)
         {
-            if (h < m_lay[k + 1].hb)
+            if (hp < Lay(k + 1).hb)
             {
                 i = k;
                 break;
@@ -462,26 +354,205 @@ private:
         return i;
     }
 
-    //  ISA temperature without the offset (internal, for the pressure).
-    //    h -- geometric height, m; converted to geopotential inside
-    double TemperatureIsa(double h) const
+    //  Molar mass, kg/kmol, GOST section 4 (geometric height h, m):
+    //  constant to 94 km; 94-97 km
+    //    M = 28.82 + 0.158 sqrt(1 - 7.5e-8 (h - 94000)^2) - 2.479e-4 sqrt(97000 - h);
+    //  linear 97-97.5 km (-0.00012 /m) and 97.5-120 km (-0.0001511 /m);
+    //  120-250 km the cubic of table 3. upper -- the cubic at any h (the
+    //  pieces above 120 km), else the formulas below 120 km at any h.
+    static double MolarMassOf(double h, bool upper)
     {
-        if (h <= 0.0)
+        if (upper)
         {
-            h = 0.0;
+            return MolarMassCubic(h);
         }
-        if (h >= Z_TOP)
+        if (h <= Z_M)
         {
-            double z = h < Z_MAX ? h : Z_MAX;
-            double f = 0.0;
-            int k = UpIndex(z, &f);
-            double tu = UpT(k) + f * (UpT(k + 1) - UpT(k));
-            //  Blend from the GOST 186.65 K into US-76, 5 km decay.
-            return tu + (T_TOP - UpT(0)) * exp(-(z - Z_TOP) / 5000.0);
+            return M_AIR0;
         }
-        h = GeomToGeopot(h);
-        int i = LayerIndex(h);
-        double t = m_lay[i].tb + m_lay[i].lb * (h - m_lay[i].hb);
+        if (h <= 97000.0)
+        {
+            double d = h - 94000.0;
+            return 28.82 + 0.158 * sqrt(1.0 - 7.5e-8 * d * d) - 2.479e-4 * sqrt(97000.0 - h);
+        }
+        if (h <= 97500.0)
+        {
+            return 28.91 - 0.00012 * (h - 97000.0);
+        }
+        return 28.85 - 0.0001511 * (h - 97500.0);
+    }
+
+    //  Molar mass 120-250 km, kg/kmol, GOST table 3, interval 1.
+    static double MolarMassCubic(double h)
+    {
+        double b = -1.85675e-15;
+        b = b * h + 12.08693e-10;
+        b = b * h - 29.71210e-5;
+        b = b * h + 46.9083;
+        return b;
+    }
+
+    //  Kinetic temperature above 120 km, K, GOST table 6 (geometric h, m).
+    static double TempUpper(double h)
+    {
+        if (h < 140000.0)
+        {
+            return 334.42 + 0.011259 * (h - 120000.0);
+        }
+        if (h < 160000.0)
+        {
+            return 559.60 + 0.006800 * (h - 140000.0);
+        }
+        if (h < 200000.0)
+        {
+            return 695.60 + 0.003970 * (h - 160000.0);
+        }
+        return 854.40 + 0.001750 * (h - 200000.0);
+    }
+
+    //  Particle concentration above 120 km, 1/m^3, GOST table 7, eq. (9):
+    //  n = (c0 + c1 h + c2 h^2 + c3 h^3 + c4 h^4) 10^e (geometric h, m).
+    //  c0 of 150-200 and 200-250 km fitted to table 4 (see the header).
+    //    i -- interval: 0 - 120-150 km, 1 - 150-200 km, 2 - 200-250 km
+    static double ConcUpper(double h, int i)
+    {
+        static const double C[3][5] =
+        {
+            { 0.210005867e4,  -0.5618444757e-1, 0.5663986231e-6, -0.2547466858e-11, 0.4309844119e-17 },
+            { 0.1016393796e4, -0.2119530830e-1, 0.1671627815e-6, -0.5894237068e-12, 0.7826684089e-18 },
+            { 0.7631575226e3, -0.1150600844e-1, 0.6612598428e-7, -0.1708736137e-12, 0.1669823114e-18 }
+        };
+        static const double E[3] = { 1.0e17, 1.0e16, 1.0e15 };
+        double s = C[i][4];
+        s = s * h + C[i][3];
+        s = s * h + C[i][2];
+        s = s * h + C[i][1];
+        s = s * h + C[i][0];
+        return s * E[i];
+    }
+
+    //  1.9.0: the knots where GOST does not join its pieces, geometric, m.
+    static double Knot(int k)
+    {
+        static const double K[N_KNOT] = { 120000.0, 150000.0, 200000.0 };
+        return K[k];
+    }
+
+    //  Piece of the profile at a height: 0 - barometric (below 120 km);
+    //  1, 2, 3 - the concentration intervals 120-150, 150-200, 200-250 km.
+    static int PieceOf(double h)
+    {
+        int i = 0;
+        int k = 0;
+        for (k = 0; k < N_KNOT; k = k + 1)
+        {
+            if (h >= Knot(k))
+            {
+                i = k + 1;
+            }
+        }
+        return i;
+    }
+
+    //  One piece of the profile at a height, standard day; a piece is
+    //  evaluated as is a little outside its interval too (Smooth blend).
+    //  The pressure is computed only when asked (wantP).
+    //    h     -- geometric height, m (not below Z_MIN)
+    //    piece -- see PieceOf
+    static void EvalPiece(double h, int piece, bool wantP, Point* q)
+    {
+        q->p = 0.0;
+        if (piece > 0)
+        {
+            double z = h;
+            if (z > Z_MAX)
+            {
+                z = Z_MAX;
+            }
+            q->tIsa = TempUpper(z);
+            q->m = MolarMassOf(z, true);
+            if (wantP && h <= Z_MAX)
+            {
+                q->p = ConcUpper(z, piece - 1) * K_BOLTZ * q->tIsa;
+            }
+            return;
+        }
+        double hp = GeomToGeopot(h);
+        int i = LayerIndex(hp);
+        const Layer& L = Lay(i);
+        double dh = hp - L.hb;
+        double tm = L.tb + L.lb * dh;
+        q->m = MolarMassOf(h, false);
+        q->tIsa = tm;
+        if (q->m != M_AIR0)
+        {
+            q->tIsa = tm * (q->m / M_AIR0);
+        }
+        if (!wantP)
+        {
+            return;
+        }
+        if (L.lb != 0.0)
+        {
+            q->p = L.pb * pow(tm / L.tb, -G0_STD / (R_AIR * L.lb));
+        }
+        else
+        {
+            q->p = L.pb * exp(-G0_STD * dh / (R_AIR * L.tb));
+        }
+    }
+
+    //  Smooth: the pieces below and above knot k blended at height h,
+    //  |h - Knot(k)| < W_SMOOTH. Weight s(x) = x^3 (10 - 15 x + 6 x^2),
+    //  x = (h - Knot(k) + W) / (2 W): s, s', s'' are 0 / 1, 0, 0 at the
+    //  window ends, so the profile is C2 there. Temperature and molar mass
+    //  are blended linearly, pressure in its logarithm (the density then
+    //  follows from the state equation).
+    static void Blend(double h, int k, bool wantP, Point* q)
+    {
+        Point a { };
+        Point b { };
+        EvalPiece(h, k, wantP, &a);
+        EvalPiece(h, k + 1, wantP, &b);
+        double x = (h - Knot(k) + W_SMOOTH) / (2.0 * W_SMOOTH);
+        double s = x * x * x * (10.0 - 15.0 * x + 6.0 * x * x);
+        q->tIsa = a.tIsa + s * (b.tIsa - a.tIsa);
+        q->m = a.m + s * (b.m - a.m);
+        q->p = 0.0;
+        if (wantP)
+        {
+            q->p = a.p * exp(s * log(b.p / a.p));
+        }
+    }
+
+    //  The profile at one height (standard day), in the mode of the object.
+    //    h -- geometric height, m
+    void Eval(double h, bool wantP, Point* q) const
+    {
+        if (h < Z_MIN)
+        {
+            h = Z_MIN;
+        }
+        if (m_mode == AtmMode::Smooth)
+        {
+            int k = 0;
+            for (k = 0; k < N_KNOT; k = k + 1)
+            {
+                double d = h - Knot(k);
+                if (d > -W_SMOOTH && d < W_SMOOTH)
+                {
+                    Blend(h, k, wantP, q);
+                    return;
+                }
+            }
+        }
+        EvalPiece(h, PieceOf(h), wantP, q);
+    }
+
+    //  Standard temperature + offset, not below 1e-3 K.
+    double OffsetT(double tIsa) const
+    {
+        double t = tIsa + m_dt;
         if (t < 1.0e-3)
         {
             t = 1.0e-3;
@@ -489,12 +560,26 @@ private:
         return t;
     }
 
-    Layer m_lay[N_LAY];
+    //  State equation: rho = p M / (R* T), written as p (M / M_AIR0) / (R T)
+    //  so that below 94 km it is p / (R T) to the bit.
+    static double Rho(double p, double m, double t)
+    {
+        if (m == M_AIR0)
+        {
+            return p / (R_AIR * t);
+        }
+        return p * (m / M_AIR0) / (R_AIR * t);
+    }
+
     double m_dt;
+    AtmMode m_mode;
 };
 
 //  Constant-initialized standard-day atmosphere.
 inline constexpr EnvAtmosphere ATM_STD = EnvAtmosphere(0.0);
+
+//  1.9.0: the same, blended at the knots of the standard (for integrators).
+inline constexpr EnvAtmosphere ATM_STD_SMOOTH = EnvAtmosphere(0.0, AtmMode::Smooth);
 
 }   // namespace gnc
 

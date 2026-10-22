@@ -14,7 +14,7 @@
  *
  * Подключаются явно (не через lib.h): lib_eskf, lib_imu, lib_nav_types,
  * lib_util, lib_table, lib_eso, lib_notch, lib_gust, lib_wind_profile,
- * lib_orbit.
+ * lib_orbit, lib_atm_upper.
  *============================================================================*/
 #ifndef LIB_H
 #define LIB_H

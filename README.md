@@ -118,3 +118,25 @@ build\gnc.lib). Заголовки -- include/, версия -- include/gnclib_v
   побитно прежние числа.
 - Проверка: `make test` (Windows: `test.bat`), проверка (f) в
   `tests/test_integrate.cpp`.
+
+## 1.8.0 — атмосфера ГОСТ 4401-81 до 250 км
+
+- `lib_atmosphere.h` — `EnvAtmosphere` целиком по ГОСТ 4401-81 от -2 до
+  250 км (было: ГОСТ до 94 км и временно US-76 до 150 км); константы ГОСТ
+  (`R_AIR` = 287.05287, `R_GEOPOT` = 6 356 767 м). Новое: `MolarMass(h)`,
+  поле `AtmState::m`. Скачки самого стандарта на 120/150/200 км сохранены.
+- Проверка против табл. 4 стандарта: `make test` (`tests/test_atmosphere.cpp`).
+
+## 1.9.0 — сглаженная атмосфера для интеграторов
+
+- `lib_atmosphere.h` — `AtmMode::Smooth` (`EnvAtmosphere(dTemp, AtmMode::Smooth)`,
+  готовый `ATM_STD_SMOOTH`): узлы ГОСТ на 120/150/200 км сглажены в окне
+  +-2 км (профиль C2), вне окон — ГОСТ побитно. По умолчанию — `AtmMode::Gost`.
+
+## 1.10.0 — верхняя атмосфера ГОСТ Р 25645.166-2004
+
+- `lib_atm_upper.h` (подключается явно) — `EnvAtmUpper`: плотность для
+  баллистики ИСЗ, 120–1500 км (ниже — приложение А), по F10.7, F81, Kp/kpp,
+  дате, времени и точке ECEF; `UpperAtmTimeOf`, `UpperAtmIndicesAt`,
+  `F81Of`, `KppOf`, `KpOfAp`; режим `AtmMode::Smooth` для интеграторов.
+- Проверка против табл. 4–11 стандарта: `make test` (`tests/test_atm_upper.cpp`).
